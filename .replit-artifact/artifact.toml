@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/home-editor/"
+title = "Sitecore Workflow Operations"
+description = "A workflow command center for Sitecore content teams, designed to run inside Sitecore Marketplace. It opens instantly on clearly labeled demo workflow data, connects to the Sitecore Marketplace host in parallel, and switches to live workflow queues, approvals, and the visual workflow builder once trusted Sitecore context is verified. No app-owned authentication: the Sitecore Marketplace SDK session is the only identity source."
+version = "1.0.0"
+id = "artifacts/home-editor"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/home-editor/" ]
+localPort = 18421
+
+[services.development]
+run = "pnpm --filter @workspace/home-editor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/home-editor", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/home-editor/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18421"
+BASE_PATH = "/home-editor/"
