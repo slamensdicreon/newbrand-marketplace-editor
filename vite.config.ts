@@ -15,7 +15,9 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH || '/home-editor/';
+// The Marketplace preview is mounted below /home-editor/, while the
+// standalone Vercel repository is served from its domain root.
+const basePath = process.env.VERCEL ? '/' : process.env.BASE_PATH || '/home-editor/';
 
 export default defineConfig({
   base: basePath,
