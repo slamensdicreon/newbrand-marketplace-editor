@@ -21,6 +21,7 @@ import { useQueries } from '@tanstack/react-query';
 import { useHost, useHostKey } from '@/lib/marketplace/provider';
 import { parseMessage, ASSISTANT_SUGGESTIONS } from '@/lib/assistant/engine';
 import type {
+  AssistantConversation,
   AssistantContext,
   AssistantEmbed,
   AssistantProposal,
@@ -57,6 +58,7 @@ export function ChatPanel({ className }: { className?: string }) {
   const hostKey = useHostKey();
   const { status } = useMarketplace();
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const [conversation, setConversation] = useState<AssistantConversation>({});
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -94,7 +96,10 @@ export function ChatPanel({ className }: { className?: string }) {
     setThinking(true);
     // Small delay so the reply feels conversational rather than instant flicker.
     window.setTimeout(() => {
-      const reply = parseMessage(text, ctx);
+      const reply = parseMessage(text, ctx, conversation);
+      if (reply.conversation) {
+        setConversation(reply.conversation);
+      }
       setMessages((prev) => [
         ...prev,
         {

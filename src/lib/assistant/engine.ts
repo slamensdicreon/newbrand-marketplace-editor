@@ -5,6 +5,7 @@ import type {
 } from '@/lib/workflow/types';
 import { validateDraftWorkflow } from '@/lib/workflow/types';
 import type {
+  AssistantConversation,
   AssistantContext,
   AssistantProposal,
   AssistantReply,
@@ -148,13 +149,88 @@ function graphFor(ctx: AssistantContext, workflowId: string): WorkflowGraph | un
   return ctx.graphs[workflowId];
 }
 
-export function parseMessage(input: string, ctx: AssistantContext): AssistantReply {
+function selectedWorkflow(
+  ctx: AssistantContext,
+  conversation: AssistantConversation | undefined,
+): WorkflowInfo | undefined {
+  return conversation?.selectedWorkflowId
+    ? ctx.workflows.find((workflow) => workflow.workflowId === conversation.selectedWorkflowId)
+    : undefined;
+}
+
+function explainWorkflow(workflow: WorkflowInfo, ctx: AssistantContext): AssistantReply {
+  const graph = graphFor(ctx, workflow.workflowId);
+  const initial = workflow.states.find((state) => state.initial);
+  const finals = workflow.states.filter((state) => state.final);
+  return {
+    text: `"${workflow.displayName}" has ${workflow.states.length} states. Content starts in "${initial?.displayName ?? 'an initial state'}" and is publishable once it reaches ${finals.length > 0 ? finals.map((state) => `"${state.displayName}"`).join(' or ') : 'a final state'}.${graph ? ` It has ${graph.transitions.length} transitions.` : ''} Ask me about any state, its available commands, or how to change this workflow.`,
+    embed: { kind: 'workflow-overview', workflowId: workflow.workflowId },
+    conversation: { selectedWorkflowId: workflow.workflowId },
+  };
+}
+
+function stateGuidance(workflow: WorkflowInfo | undefined): AssistantReply {
+  const workflowContext = workflow
+    ? ` For "${workflow.displayName}", its current states are ${workflow.states.map((state) => `"${state.displayName}"`).join(', ')}.`
+    : '';
+  return {
+    text:
+      'A workflow state is a named place where content waits in a process. This workspace supports three useful roles: one initial state where new content begins, one or more working/review states, and one or more final states where content is ready to publish. For a simple 3-state flow, use Draft → In Review → Approved. Other useful patterns are Draft → Legal Review → Approved, or Draft → Editorial Review → Ready to Publish. You can choose the names that fit your team; mark only the beginning state as initial and the completed outcome as final.' +
+      workflowContext,
+    conversation: workflow ? { selectedWorkflowId: workflow.workflowId } : undefined,
+  };
+}
+
+export function parseMessage(
+  input: string,
+  ctx: AssistantContext,
+  conversation?: AssistantConversation,
+): AssistantReply {
   const msg = norm(input);
   if (!msg) return { text: CAPABILITIES_TEXT, embed: { kind: 'capabilities' } };
+  const currentWorkflow = selectedWorkflow(ctx, conversation);
 
   // --- Help / capabilities ------------------------------------------------
   if (/^(help|what can you do|capabilities|hi|hello|hey)\b/.test(msg) || msg === '?') {
     return { text: CAPABILITIES_TEXT, embed: { kind: 'capabilities' } };
+  }
+
+  // --- Learn workflow concepts ---------------------------------------------
+  if (
+    /\b(?:what|which|kind|types?)\b.*\bstates?\b.*\b(?:create|use|have|are)\b/.test(msg) ||
+    /\b(?:what|which|kind|types?)\b.*\bstate\b/.test(msg)
+  ) {
+    return stateGuidance(currentWorkflow);
+  }
+  if (/^(?:(?:i want|use|make|create)\s+)?(?:3|three)\s+states?\b/.test(msg)) {
+    return {
+      text: `A 3-state workflow is a clear starting point: Draft → In Review → Approved. Draft is the initial state, In Review is where people make a decision, and Approved is final. Add a Reject transition from In Review back to Draft so editors can revise. Say “create a workflow called Content Review with states Draft, In Review, Approved” when you’re ready for a reviewable proposal.${currentWorkflow ? ` I can also help adapt "${currentWorkflow.displayName}".` : ''}`,
+      conversation: currentWorkflow
+        ? { selectedWorkflowId: currentWorkflow.workflowId }
+        : undefined,
+    };
+  }
+
+  // A workflow-name-only response is a valid answer to a prior ambiguity
+  // question and is also a useful direct shortcut to an explanation.
+  const namedWorkflow = resolveWorkflow(ctx, input);
+  const isBareWorkflowSelection =
+    !/\b(?:create|add|delete|remove|explain|describe|show|open|tell|what|which|help|commands?|states?|transitions?)\b/.test(
+      msg,
+    );
+  if (
+    isBareWorkflowSelection &&
+    namedWorkflow.workflow &&
+    (!conversation?.awaitingWorkflowIds ||
+      conversation.awaitingWorkflowIds.includes(namedWorkflow.workflow.workflowId))
+  ) {
+    return explainWorkflow(namedWorkflow.workflow, ctx);
+  }
+  if (
+    currentWorkflow &&
+    /^(?:explain|describe|show|open|tell me about)(?:\s+(?:it|this|that|the selected workflow))?\??$/.test(msg)
+  ) {
+    return explainWorkflow(currentWorkflow, ctx);
   }
 
   // --- Create workflow ----------------------------------------------------
@@ -192,12 +268,16 @@ export function parseMessage(input: string, ctx: AssistantContext): AssistantRep
   // --- Add state ------------------------------------------------------------
   {
     const m = input.match(
-      /add\s+(?:a\s+)?(final\s+)?state\s+(?:called|named)?\s*"?([^"]+?)"?(?:\s+(?:to|in)\s+(?:the\s+)?"?([^"]+?)"?(?:\s+workflow)?)?\s*$/i,
+      /add\s+(?:a\s+)?(final\s+)?state\s+(?:called|named)?\s*"?([^"]+?)"?(?:\s+(?:to|in)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
     );
     if (m) {
       const finalFlag = !!m[1] || /\bfinal\b/i.test(input);
       const stateName = unquote(m[2]!);
-      const { workflow, ambiguous, unknown } = resolveWorkflow(ctx, m[3] ? unquote(m[3]) : undefined);
+      const requestedWorkflowName = m[3] ? unquote(m[3]) : undefined;
+      const resolved = requestedWorkflowName
+        ? resolveWorkflow(ctx, requestedWorkflowName)
+        : { workflow: currentWorkflow } as ReturnType<typeof resolveWorkflow>;
+      const { workflow, ambiguous, unknown } = resolved;
       if (ambiguous) {
         return {
           text: `Which workflow do you mean: ${ambiguous.map((w) => `"${w.displayName}"`).join(', ')}?`,
@@ -233,7 +313,7 @@ export function parseMessage(input: string, ctx: AssistantContext): AssistantRep
   // --- Add transition -------------------------------------------------------
   {
     const m = input.match(
-      /add\s+(?:a\s+)?(?:transition|command)\s+(?:called|named)?\s*"?([^"]+?)"?\s+from\s+"?([^"]+?)"?\s+to\s+"?([^"]+?)"?(?:\s+(?:in|on)\s+(?:the\s+)?"?([^"]+?)"?(?:\s+workflow)?)?\s*$/i,
+      /add\s+(?:a\s+)?(?:transition|command)\s+(?:called|named)?\s*"?([^"]+?)"?\s+from\s+"?([^"]+?)"?\s+to\s+"?([^"]+?)"?(?:\s+(?:in|on)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
     );
     if (m) {
       const cmdName = unquote(m[1]!);
@@ -254,7 +334,7 @@ export function parseMessage(input: string, ctx: AssistantContext): AssistantRep
         }
         workflow = resolved.workflow;
       } else {
-        workflow = findStateAcrossWorkflows(ctx, fromName)?.workflow;
+        workflow = currentWorkflow ?? findStateAcrossWorkflows(ctx, fromName)?.workflow;
       }
       if (!workflow) {
         return { text: `I couldn’t tell which workflow contains "${fromName}". Add "... in <workflow name>" and I’ll draft it.` };
@@ -298,11 +378,15 @@ export function parseMessage(input: string, ctx: AssistantContext): AssistantRep
   // --- Delete transition ------------------------------------------------------
   {
     const m = input.match(
-      /(?:delete|remove)\s+(?:the\s+)?"?([^"]+?)"?\s+(?:transition|command)(?:\s+(?:in|from|of)\s+(?:the\s+)?"?([^"]+?)"?(?:\s+workflow)?)?\s*$/i,
+      /(?:delete|remove)\s+(?:the\s+)?"?([^"]+?)"?\s+(?:transition|command)(?:\s+(?:in|from|of)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
     );
     if (m) {
       const cmdName = unquote(m[1]!);
-      const { workflow, ambiguous, unknown } = resolveWorkflow(ctx, m[2] ? unquote(m[2]) : undefined);
+      const requestedWorkflowName = m[2] ? unquote(m[2]) : undefined;
+      const resolved = requestedWorkflowName
+        ? resolveWorkflow(ctx, requestedWorkflowName)
+        : { workflow: currentWorkflow } as ReturnType<typeof resolveWorkflow>;
+      const { workflow, ambiguous, unknown } = resolved;
       if (ambiguous) {
         return { text: `Which workflow: ${ambiguous.map((w) => `"${w.displayName}"`).join(', ')}?` };
       }
@@ -392,21 +476,18 @@ export function parseMessage(input: string, ctx: AssistantContext): AssistantRep
   // --- Explain a workflow --------------------------------------------------------
   {
     const m = input.match(
-      /(?:explain|describe|show|open|tell me about)\s+(?:me\s+)?(?:the\s+)?"?([^"]+?)"?(?:\s+workflow)?\s*$/i,
+      /(?:explain|describe|show|open|tell me about)\s+(?:me\s+)?(?:the\s+)?"?([^"]+?)"?\s*$/i,
     );
     if (m && !/workflows$/i.test(msg)) {
       const { workflow, ambiguous } = resolveWorkflow(ctx, unquote(m[1]!));
       if (ambiguous) {
-        return { text: `Which one: ${ambiguous.map((w) => `"${w.displayName}"`).join(', ')}?` };
+        return {
+          text: `Which one: ${ambiguous.map((w) => `"${w.displayName}"`).join(', ')}?`,
+          conversation: { awaitingWorkflowIds: ambiguous.map((workflow) => workflow.workflowId) },
+        };
       }
       if (workflow) {
-        const graph = graphFor(ctx, workflow.workflowId);
-        const initial = workflow.states.find((s) => s.initial);
-        const finals = workflow.states.filter((s) => s.final);
-        return {
-          text: `"${workflow.displayName}" has ${workflow.states.length} states. Content starts in "${initial?.displayName ?? 'an initial state'}" and is publishable once it reaches ${finals.length > 0 ? finals.map((s) => `"${s.displayName}"`).join(' or ') : 'a final state'}.${graph ? ` It has ${graph.transitions.length} transitions.` : ''}`,
-          embed: { kind: 'workflow-overview', workflowId: workflow.workflowId },
-        };
+        return explainWorkflow(workflow, ctx);
       }
     }
   }

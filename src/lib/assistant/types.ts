@@ -24,6 +24,17 @@ export interface AssistantContext {
   graphs: Record<string, WorkflowGraph>;
 }
 
+/**
+ * Small, client-only conversational memory. It contains only resolved
+ * workflow ids and candidate ids already returned from the current host;
+ * it never stores an invented target or a mutation request. ChatPanel is
+ * remounted with the host generation, so this state cannot cross demo/live.
+ */
+export interface AssistantConversation {
+  selectedWorkflowId?: string;
+  awaitingWorkflowIds?: string[];
+}
+
 export type AssistantProposal =
   | {
       kind: 'create-workflow';
@@ -69,6 +80,8 @@ export interface AssistantReply {
   proposal?: AssistantProposal;
   /** Non-blocking caveats shown with the reply. */
   warnings?: string[];
+  /** Updated only from workflow ids resolved against the current host. */
+  conversation?: AssistantConversation;
 }
 
 export type ProposalStatus = 'pending' | 'applied' | 'cancelled' | 'failed';

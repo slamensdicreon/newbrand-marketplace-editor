@@ -153,6 +153,90 @@ describe('assistant engine', () => {
     expect(r.embed).toMatchObject({ kind: 'state-queue', stateId: 's-review' });
   });
 
+  it('teaches the user what state roles are available', () => {
+    const r = parseMessage('what kind of states can I create?', ctx);
+    expect(r.proposal).toBeUndefined();
+    expect(r.text).toMatch(/initial state/i);
+    expect(r.text).toMatch(/working\/review states/i);
+    expect(r.text).toMatch(/final states/i);
+  });
+
+  it('explains how a three-state review flow works', () => {
+    const r = parseMessage('3 states', ctx);
+    expect(r.proposal).toBeUndefined();
+    expect(r.text).toContain('Draft → In Review → Approved');
+    expect(r.text).toMatch(/Reject transition/i);
+  });
+
+  it('understands a workflow name as the answer to an ambiguity prompt', () => {
+    const webhook = {
+      workflowId: 'wf-webhook',
+      displayName: 'Sample Webhook Workflow',
+      states: sampleGraph.states,
+    };
+    const multiWorkflowCtx: AssistantContext = {
+      workflows: [...ctx.workflows, webhook],
+      graphs: { ...ctx.graphs, [webhook.workflowId]: { ...sampleGraph, workflowId: webhook.workflowId } },
+    };
+    const prompt = parseMessage('explain the Sample', multiWorkflowCtx);
+    expect(prompt.conversation?.awaitingWorkflowIds).toEqual(
+      expect.arrayContaining(['wf-1', 'wf-webhook']),
+    );
+
+    const selected = parseMessage('Sample Webhook Workflow', multiWorkflowCtx, prompt.conversation);
+    expect(selected.text).toContain('"Sample Webhook Workflow" has 3 states');
+    expect(selected.embed).toEqual({ kind: 'workflow-overview', workflowId: 'wf-webhook' });
+    expect(selected.conversation).toEqual({ selectedWorkflowId: 'wf-webhook' });
+  });
+
+  it('uses the selected workflow for a concise follow-up change request', () => {
+    const selected = parseMessage('Sample Workflow', ctx);
+    const r = parseMessage('add a state called Legal Check', ctx, selected.conversation);
+    expect(r.proposal).toMatchObject({
+      kind: 'add-state',
+      workflowId: 'wf-1',
+      workflowName: 'Sample Workflow',
+      stateName: 'Legal Check',
+    });
+  });
+
+  it('does not mistake a mutation for a workflow choice while awaiting selection', () => {
+    const webhook = {
+      workflowId: 'wf-webhook',
+      displayName: 'Sample Webhook Workflow',
+      states: sampleGraph.states,
+    };
+    const multiWorkflowCtx: AssistantContext = {
+      workflows: [...ctx.workflows, webhook],
+      graphs: ctx.graphs,
+    };
+    const r = parseMessage(
+      'add a state called Legal Check to Sample Workflow',
+      multiWorkflowCtx,
+      { awaitingWorkflowIds: ['wf-1', 'wf-webhook'] },
+    );
+    expect(r.proposal).toMatchObject({
+      kind: 'add-state',
+      workflowId: 'wf-1',
+      stateName: 'Legal Check',
+    });
+  });
+
+  it('fails closed when a previously selected workflow is no longer in host data', () => {
+    const r = parseMessage('add a state called Legal Check', { workflows: [], graphs: {} }, {
+      selectedWorkflowId: 'wf-1',
+    });
+    expect(r.proposal).toBeUndefined();
+    expect(r.text).toMatch(/which workflow/i);
+  });
+
+  it('explains the selected workflow when the user says explain it', () => {
+    const selected = parseMessage('Sample Workflow', ctx);
+    const r = parseMessage('explain it', ctx, selected.conversation);
+    expect(r.text).toContain('"Sample Workflow" has 3 states');
+    expect(r.conversation).toEqual({ selectedWorkflowId: 'wf-1' });
+  });
+
   it('never falls back to the only workflow when an explicit name does not resolve', () => {
     const r = parseMessage('delete the Reject transition in Other Workflow', ctx);
     expect(r.proposal).toBeUndefined();
