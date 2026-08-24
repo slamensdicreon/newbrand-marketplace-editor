@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, Bot, Check, Loader2, Send, Sparkles, X } from 'lucide-react';
+import { ArrowRight, Check, ChevronLeft, Loader2, Send, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { WorkflowCanvas } from '@/components/workflow-canvas';
 import { cn } from '@/lib/utils';
+import icreonLogo from '@/assets/icreon-logo.png';
 import {
   useAddState,
   useAddTransition,
@@ -52,7 +53,7 @@ const WELCOME: ChatMessage = {
  * the host-generation remount, so demo-era conversations and pending
  * proposals are dropped on a demo → live handoff.
  */
-export function ChatPanel({ className }: { className?: string }) {
+export function ChatPanel({ className, onClose }: { className?: string; onClose?: () => void }) {
   const workflows = useWorkflows();
   const host = useHost();
   const hostKey = useHostKey();
@@ -122,8 +123,8 @@ export function ChatPanel({ className }: { className?: string }) {
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)} data-testid="panel-assistant">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <div className="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Sparkles className="size-4" />
+        <div className="flex size-7 items-center justify-center overflow-hidden rounded-md bg-background">
+          <img src={icreonLogo} alt="" className="size-full object-contain" />
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-foreground">Workflow assistant</p>
@@ -133,6 +134,18 @@ export function ChatPanel({ className }: { className?: string }) {
               : 'Working with demo data — changes stay local'}
           </p>
         </div>
+        {onClose && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8 shrink-0"
+            onClick={onClose}
+            aria-label="Hide workflow assistant"
+            data-testid="button-hide-assistant"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+        )}
       </div>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -228,8 +241,8 @@ function Message({
   }
   return (
     <div className="flex gap-2.5">
-      <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-        <Bot className="size-3.5" />
+      <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-background">
+        <img src={icreonLogo} alt="" className="size-full object-contain" />
       </div>
       <div className="min-w-0 max-w-[90%] flex-1 space-y-2">
         <div

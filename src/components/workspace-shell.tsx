@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useRoute } from 'wouter';
 import {
   CloudOff,
+  ChevronRight,
   FileText,
   GitBranch,
   LayoutDashboard,
@@ -9,7 +10,6 @@ import {
   MessageSquareText,
   PencilRuler,
   RefreshCw,
-  X,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ChatPanel } from '@/components/assistant/chat-panel';
 import { useEditorUser, useMarketplace, useWorkflows } from '@/lib/marketplace/provider';
 import { cn } from '@/lib/utils';
+import icreonLogo from '@/assets/icreon-logo.png';
 
 /**
  * Enterprise workspace shell: a persistent three-pane layout.
@@ -58,32 +59,31 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       {/* --- Assistant (col 2 on desktop, slide-over on mobile) --- */}
       <section
         className={cn(
-          'min-h-0 bg-background',
-          'lg:col-span-2 lg:flex lg:flex-col lg:border-r lg:border-border',
+          'min-h-0 bg-background transition-[width,transform] duration-200',
           chatOpen
-            ? 'fixed inset-0 z-40 flex flex-col lg:static lg:z-auto'
-            : 'hidden lg:flex',
+            ? 'fixed inset-0 z-40 flex flex-col motion-safe:animate-in motion-safe:slide-in-from-left-full motion-safe:duration-200 lg:static lg:z-auto lg:col-span-2 lg:border-r lg:border-border'
+            : 'hidden',
         )}
       >
-        {chatOpen && (
-          <div className="flex items-center justify-end border-b border-border px-2 py-1.5 lg:hidden">
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-8"
-              onClick={() => setChatOpen(false)}
-              aria-label="Close assistant"
-              data-testid="button-close-assistant"
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-        )}
-        <ChatPanel className="flex-1" />
+        <ChatPanel className="flex-1" onClose={() => setChatOpen(false)} />
       </section>
 
       {/* --- Workspace content (col 3-6 → spans 3) --- */}
-      <main className="min-h-0 flex-1 overflow-y-auto lg:col-span-3">{children}</main>
+      <main className={cn('min-h-0 flex-1 overflow-y-auto', chatOpen ? 'lg:col-span-3' : 'lg:col-span-5')}>
+        {children}
+      </main>
+      {!chatOpen && (
+        <Button
+          size="icon"
+          variant="outline"
+          className="fixed left-[calc(16.6667%+0.75rem)] top-1/2 z-30 hidden -translate-y-1/2 rounded-full bg-background shadow-md lg:flex"
+          onClick={() => setChatOpen(true)}
+          aria-label="Open workflow assistant"
+          data-testid="button-reopen-assistant"
+        >
+          <ChevronRight className="size-4" />
+        </Button>
+      )}
     </div>
   );
 }
@@ -91,8 +91,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 function Brand({ compact }: { compact?: boolean }) {
   return (
     <Link href="/" className="flex min-w-0 items-center gap-2.5" data-testid="link-brand">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-inverse-text">
-        <span className="text-xs font-bold tracking-tight">WO</span>
+      <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-background">
+        <img src={icreonLogo} alt="" className="size-full object-contain" />
       </div>
       {!compact && (
         <div className="min-w-0">
