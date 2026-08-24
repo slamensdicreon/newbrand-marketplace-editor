@@ -5,9 +5,13 @@ import {
 } from '@/lib/home-content';
 import type { EditorUser, MarketplaceHost, SiteSummary } from './host';
 import {
+  classifyTemplate,
   normalizeId,
   validateDraftWorkflow,
+  MAX_ASSIGN_SELECTION,
+  type AssignmentResult,
   type CommandResult,
+  type ContentItem,
   type DraftWorkflowSpec,
   type ExecuteCommandArgs,
   type QueueItem,
@@ -430,6 +434,116 @@ export class MockMarketplaceHost implements MarketplaceHost {
     throw new Error('Item not found in any demo workflow definition.');
   }
 
+  /* ---------- Content browsing & workflow assignment (demo) ---------- */
+
+  private contentTree: Map<string | null, DemoContentNode[]> = demoContentTree();
+
+  private findContentNode(itemId: string): DemoContentNode | null {
+    const id = normalizeId(itemId);
+    for (const nodes of this.contentTree.values()) {
+      const node = nodes.find((n) => n.item.itemId === id);
+      if (node) return node;
+    }
+    return null;
+  }
+
+  private decorateWorkflow(item: ContentItem): ContentItem {
+    // Resolve workflow/state display names against the current definitions.
+    if (!item.workflow) return { ...item, workflow: null, workflowState: null };
+    const wf = this.workflows.find((w) => w.workflowId === item.workflow!.workflowId);
+    const state = wf?.states.find((s) => s.stateId === item.workflowState?.stateId);
+    return {
+      ...item,
+      workflow: wf
+        ? { workflowId: wf.workflowId, displayName: wf.displayName }
+        : { ...item.workflow },
+      workflowState: item.workflowState
+        ? { stateId: item.workflowState.stateId, displayName: state?.displayName ?? item.workflowState.displayName }
+        : null,
+    };
+  }
+
+  async getContentChildren(parentId: string | null): Promise<ContentItem[]> {
+    await delay(this.latencyMs);
+    const key = parentId ? normalizeId(parentId) : null;
+    return (this.contentTree.get(key) ?? []).map((n) => this.decorateWorkflow({ ...n.item }));
+  }
+
+  async getContentItems(itemIds: string[]): Promise<ContentItem[]> {
+    await delay(this.latencyMs);
+    const items: ContentItem[] = [];
+    for (const id of itemIds) {
+      const node = this.findContentNode(id);
+      if (node) items.push(this.decorateWorkflow({ ...node.item }));
+    }
+    return items;
+  }
+
+  async assignWorkflow(items: ContentItem[], workflowId: string): Promise<AssignmentResult[]> {
+    await delay(this.latencyMs);
+    if (items.length === 0) return [];
+    if (items.length > MAX_ASSIGN_SELECTION) {
+      throw new Error(
+        `Refusing to assign a workflow to ${items.length} items — the limit is ${MAX_ASSIGN_SELECTION} per operation.`,
+      );
+    }
+    const wf = this.workflows.find((w) => w.workflowId === normalizeId(workflowId));
+    const initial = wf?.states.find((s) => s.initial);
+    if (!wf || !initial) {
+      throw new Error(
+        'The workflow or its initial state could not be verified, so nothing was assigned.',
+      );
+    }
+    const results: AssignmentResult[] = [];
+    for (const item of items) {
+      const node = this.findContentNode(item.itemId);
+      if (!node) {
+        results.push({
+          itemId: normalizeId(item.itemId),
+          name: item.name,
+          path: item.path,
+          successful: false,
+          error: 'The item no longer exists.',
+        });
+        continue;
+      }
+      node.item.workflow = { workflowId: wf.workflowId, displayName: wf.displayName };
+      node.item.workflowState = { stateId: initial.stateId, displayName: initial.displayName };
+      // Surface the item in the workflow's initial-state queue.
+      const key = queueKey(wf.workflowId, initial.stateId);
+      const queue = this.queueItems.get(key) ?? [];
+      if (!queue.some((q) => q.item.itemId === node.item.itemId)) {
+        const nextStateByCommand: Record<string, string> = {};
+        for (const t of this.transitions.get(wf.workflowId) ?? []) {
+          if (t.fromStateId === initial.stateId && t.toStateId) {
+            nextStateByCommand[t.commandId] = t.toStateId;
+          }
+        }
+        queue.push({
+          item: {
+            itemId: node.item.itemId,
+            name: node.item.name,
+            path: node.item.path,
+            language: node.item.language,
+            version: node.item.version,
+            updatedAt: new Date().toISOString(),
+            updatedBy: 'sitecore\\demo.editor',
+          },
+          nextStateByCommand,
+        });
+        this.queueItems.set(key, queue);
+      }
+      results.push({
+        itemId: node.item.itemId,
+        name: node.item.name,
+        path: node.item.path,
+        successful: true,
+        error: null,
+      });
+    }
+    return results;
+  }
+
   destroy(): void {
     // Nothing to release.
   }
@@ -555,6 +669,175 @@ function demoCommands(): Map<string, WorkflowCommandInfo[]> {
 function demoHistory(): Map<string, WorkflowHistoryEvent[]> {
   // History accrues as demo commands run; queues start with none recorded.
   return new Map();
+}
+
+/* ------------------------------------------------------------------ */
+/* Demo content tree (pages + component-surrounding content)           */
+/* ------------------------------------------------------------------ */
+
+interface DemoContentNode {
+  item: ContentItem;
+  parentId: string | null;
+}
+
+function demoContentItem(args: {
+  itemId: string;
+  name: string;
+  path: string;
+  templateName: string;
+  hasChildren: boolean;
+  workflow?: { workflowId: string; displayName: string } | null;
+  workflowState?: { stateId: string; displayName: string } | null;
+}): ContentItem {
+  return {
+    itemId: args.itemId,
+    name: args.name,
+    path: args.path,
+    templateName: args.templateName,
+    kind: classifyTemplate(args.templateName),
+    hasChildren: args.hasChildren,
+    language: 'en',
+    version: 1,
+    workflow: args.workflow ?? null,
+    workflowState: args.workflowState ?? null,
+  };
+}
+
+const CT_HOME = '{DEC01000-0000-4000-8000-000000000001}';
+const CT_DATA = '{DEC01000-0000-4000-8000-000000000002}';
+const CT_ABOUT = '{DEC01000-0000-4000-8000-000000000003}';
+const CT_PRODUCTS = '{DEC01000-0000-4000-8000-000000000004}';
+const CT_HERO = '{DEC01000-0000-4000-8000-000000000005}';
+const CT_SERVICES = '{DEC01000-0000-4000-8000-000000000006}';
+const CT_STORIES = '{DEC01000-0000-4000-8000-000000000007}';
+const CT_CATALOG = '{DEC01000-0000-4000-8000-000000000008}';
+const CT_PROD_TRUSSES = '{DEC01000-0000-4000-8000-000000000009}';
+const CT_PROD_PANELS = '{DEC01000-0000-4000-8000-00000000000A}';
+
+function demoContentTree(): Map<string | null, DemoContentNode[]> {
+  const base = '/sitecore/content/brands/new-brand';
+  const sample = { workflowId: WF_SAMPLE, displayName: 'Sample Workflow' };
+  const draft = { stateId: ST_DRAFT, displayName: 'Draft' };
+  const awaiting = { stateId: ST_AWAITING, displayName: 'Awaiting Approval' };
+  const approved = { stateId: ST_APPROVED, displayName: 'Approved' };
+  const map = new Map<string | null, DemoContentNode[]>();
+  map.set(null, [
+    {
+      parentId: null,
+      item: demoContentItem({
+        itemId: CT_HOME,
+        name: 'Home',
+        path: `${base}/Home`,
+        templateName: 'Landing Page',
+        hasChildren: true,
+        workflow: sample,
+        workflowState: approved,
+      }),
+    },
+    {
+      parentId: null,
+      item: demoContentItem({
+        itemId: CT_ABOUT,
+        name: 'About',
+        path: `${base}/About`,
+        templateName: 'Content Page',
+        hasChildren: false,
+      }),
+    },
+    {
+      parentId: null,
+      item: demoContentItem({
+        itemId: CT_PRODUCTS,
+        name: 'Products',
+        path: `${base}/Products`,
+        templateName: 'Content Page',
+        hasChildren: true,
+      }),
+    },
+  ]);
+  map.set(CT_HOME, [
+    {
+      parentId: CT_HOME,
+      item: demoContentItem({
+        itemId: CT_DATA,
+        name: 'Data',
+        path: `${base}/Home/Data`,
+        templateName: 'Data Folder',
+        hasChildren: true,
+      }),
+    },
+  ]);
+  map.set(CT_DATA, [
+    {
+      parentId: CT_DATA,
+      item: demoContentItem({
+        itemId: CT_HERO,
+        name: 'Hero Build',
+        path: `${base}/Home/Data/Hero Build`,
+        templateName: 'Hero Section',
+        hasChildren: false,
+        workflow: sample,
+        workflowState: draft,
+      }),
+    },
+    {
+      parentId: CT_DATA,
+      item: demoContentItem({
+        itemId: CT_SERVICES,
+        name: 'Services',
+        path: `${base}/Home/Data/Services`,
+        templateName: 'Promo Banner',
+        hasChildren: false,
+        workflow: sample,
+        workflowState: draft,
+      }),
+    },
+    {
+      parentId: CT_DATA,
+      item: demoContentItem({
+        itemId: CT_STORIES,
+        name: 'Stories',
+        path: `${base}/Home/Data/Stories`,
+        templateName: 'Stories Rail',
+        hasChildren: false,
+        workflow: sample,
+        workflowState: awaiting,
+      }),
+    },
+    {
+      parentId: CT_DATA,
+      item: demoContentItem({
+        itemId: CT_CATALOG,
+        name: 'Catalog',
+        path: `${base}/Home/Data/Catalog`,
+        templateName: 'Catalog Section',
+        hasChildren: false,
+      }),
+    },
+  ]);
+  map.set(CT_PRODUCTS, [
+    {
+      parentId: CT_PRODUCTS,
+      item: demoContentItem({
+        itemId: CT_PROD_TRUSSES,
+        name: 'Trusses',
+        path: `${base}/Products/Trusses`,
+        templateName: 'Product Page',
+        hasChildren: false,
+      }),
+    },
+    {
+      parentId: CT_PRODUCTS,
+      item: demoContentItem({
+        itemId: CT_PROD_PANELS,
+        name: 'Wall Panels',
+        path: `${base}/Products/Wall Panels`,
+        templateName: 'Product Page',
+        hasChildren: false,
+      }),
+    },
+  ]);
+  return map;
 }
 
 function demoTransitions(): Map<string, WorkflowTransitionInfo[]> {

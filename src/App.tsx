@@ -10,6 +10,7 @@ import Workflows from '@/pages/workflows';
 import WorkflowQueue from '@/pages/workflow-queue';
 import WorkflowDetail from '@/pages/workflow-detail';
 import WorkflowBuilder from '@/pages/workflow-builder';
+import ApplyWorkflow from '@/pages/apply-workflow';
 import { MarketplaceProvider, useHostKey } from '@/lib/marketplace/provider';
 import { ModeIndicator } from '@/components/mode-indicator';
 import { WorkspaceShell } from '@/components/workspace-shell';
@@ -30,6 +31,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Workflows} />
         <Route path="/workflows/:workflowId/states/:stateId" component={WorkflowQueue} />
+        <Route path="/workflows/:workflowId/apply" component={ApplyWorkflow} />
         <Route path="/workflows/:workflowId" component={WorkflowDetail} />
         <Route path="/builder" component={WorkflowBuilder} />
         <Route path="/content" component={Dashboard} />

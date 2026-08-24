@@ -1,6 +1,8 @@
 import type { SectionDefinition, SectionValues } from '@/lib/home-content';
 import type {
+  AssignmentResult,
   CommandResult,
+  ContentItem,
   DraftWorkflowSpec,
   ExecuteCommandArgs,
   QueuePage,
@@ -87,6 +89,28 @@ export interface MarketplaceHost {
    * recycle bin. Never deletes permanently.
    */
   deleteDefinitionItem(itemId: string): Promise<void>;
+
+  /* ---- Content browsing & workflow assignment ----
+   * Assignment writes the standard `__Workflow` / `__Workflow state`
+   * fields through the verified updateItem mutation, one explicit item at
+   * a time. There is deliberately no "assign to subtree" operation. */
+
+  /**
+   * Children of one content item (or the site content root when null),
+   * with workflow metadata for the assignment browser.
+   */
+  getContentChildren(parentId: string | null): Promise<ContentItem[]>;
+  /**
+   * Fresh lookup of specific items by id, used to re-resolve a selection
+   * immediately before assignment. Missing items are simply omitted.
+   */
+  getContentItems(itemIds: string[]): Promise<ContentItem[]>;
+  /**
+   * Assign a workflow (placing each item in the workflow's initial state)
+   * to an explicit, bounded set of items. Returns per-item results and
+   * never retries or widens the selection.
+   */
+  assignWorkflow(items: ContentItem[], workflowId: string): Promise<AssignmentResult[]>;
 
   /** Release any resources (subscriptions, ports). */
   destroy(): void;

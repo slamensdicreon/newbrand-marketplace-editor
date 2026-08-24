@@ -57,6 +57,9 @@ function liveHostStub(): MarketplaceHost & { destroyed: boolean } {
     addState: async () => ({ stateId: 's' }),
     addTransition: async () => ({ commandId: 'c' }),
     deleteDefinitionItem: async () => undefined,
+    getContentChildren: async () => [],
+    getContentItems: async () => [],
+    assignWorkflow: async () => [],
     destroy() {
       this.destroyed = true;
     },

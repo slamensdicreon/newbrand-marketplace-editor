@@ -2,10 +2,14 @@ import { ClientSDK } from '@sitecore-marketplace-sdk/client';
 import { XMC } from '@sitecore-marketplace-sdk/xmc';
 import type { SectionDefinition, SectionValues } from '@/lib/home-content';
 import {
+  classifyTemplate,
   normalizeId,
   parseSitecoreDate,
   validateDraftWorkflow,
+  MAX_ASSIGN_SELECTION,
+  type AssignmentResult,
   type CommandResult,
+  type ContentItem,
   type DraftWorkflowSpec,
   type ExecuteCommandArgs,
   type QueuePage,
@@ -707,6 +711,172 @@ export class SdkMarketplaceHost implements MarketplaceHost {
     if (successful !== true) {
       throw new Error('Sitecore did not confirm the deletion.');
     }
+  }
+
+  /* ---------------- Content browsing & workflow assignment ---------------- */
+
+  /** Fields queried for every node in the assignment browser. */
+  private static readonly CONTENT_ITEM_FIELDS = `
+    itemId
+    name
+    path
+    version
+    hasChildren
+    template { name }
+    language { name }
+    wf: field(name: "__Workflow") { value }
+    wfState: field(name: "__Workflow state") { value }
+  `;
+
+  private toContentItem(
+    node: {
+      itemId: string;
+      name: string;
+      path: string;
+      version?: number | null;
+      hasChildren?: boolean | null;
+      template?: { name?: string } | null;
+      language?: { name?: string } | null;
+      wf?: { value?: string } | null;
+      wfState?: { value?: string } | null;
+    },
+    workflowNames: Map<string, { displayName: string; states: Map<string, string> }>,
+  ): ContentItem {
+    const wfId = node.wf?.value ? normalizeId(node.wf.value) : null;
+    const stId = node.wfState?.value ? normalizeId(node.wfState.value) : null;
+    const wfInfo = wfId ? workflowNames.get(wfId) : undefined;
+    return {
+      itemId: normalizeId(node.itemId),
+      name: node.name,
+      path: node.path,
+      templateName: node.template?.name ?? 'Unknown',
+      kind: classifyTemplate(node.template?.name ?? ''),
+      hasChildren: node.hasChildren === true,
+      language: node.language?.name ?? LANGUAGE,
+      version: node.version ?? null,
+      workflow: wfId ? { workflowId: wfId, displayName: wfInfo?.displayName ?? wfId } : null,
+      workflowState: stId
+        ? { stateId: stId, displayName: wfInfo?.states.get(stId) ?? stId }
+        : null,
+    };
+  }
+
+  /** workflowId → display names, for labelling item workflow metadata. */
+  private async workflowNameMap(): Promise<
+    Map<string, { displayName: string; states: Map<string, string> }>
+  > {
+    const workflows = await this.listWorkflows();
+    return new Map(
+      workflows.map((wf) => [
+        wf.workflowId,
+        {
+          displayName: wf.displayName,
+          states: new Map(wf.states.map((s) => [s.stateId, s.displayName] as const)),
+        },
+      ]),
+    );
+  }
+
+  async getContentChildren(parentId: string | null): Promise<ContentItem[]> {
+    const where = parentId
+      ? `{ itemId: $ref, language: "${LANGUAGE}" }`
+      : `{ path: $ref, language: "${LANGUAGE}" }`;
+    const [data, names] = await Promise.all([
+      this.graphql(
+        `query ContentChildren($ref: ${parentId ? 'ID!' : 'String!'}) {
+          item(where: ${where}) {
+            children(first: 50) {
+              nodes { ${SdkMarketplaceHost.CONTENT_ITEM_FIELDS} }
+            }
+          }
+        }`,
+        { ref: parentId ?? '/sitecore/content' },
+      ),
+      this.workflowNameMap(),
+    ]);
+    const nodes =
+      (data['item'] as {
+        children?: { nodes?: Array<Parameters<SdkMarketplaceHost['toContentItem']>[0]> };
+      } | null)?.children?.nodes ?? [];
+    return nodes.map((n) => this.toContentItem(n, names));
+  }
+
+  async getContentItems(itemIds: string[]): Promise<ContentItem[]> {
+    if (itemIds.length === 0) return [];
+    const names = await this.workflowNameMap();
+    // One aliased query; items that no longer exist come back null and are
+    // omitted — the caller treats them as stale, never substitutes.
+    const aliases = itemIds
+      .map((_, i) => `i${i}: item(where: { itemId: $id${i}, language: "${LANGUAGE}" }) { ${SdkMarketplaceHost.CONTENT_ITEM_FIELDS} }`)
+      .join('\n');
+    const varDefs = itemIds.map((_, i) => `$id${i}: ID!`).join(', ');
+    const variables: Record<string, unknown> = {};
+    itemIds.forEach((id, i) => {
+      variables[`id${i}`] = id;
+    });
+    const data = await this.graphql(`query ResolveItems(${varDefs}) { ${aliases} }`, variables);
+    const items: ContentItem[] = [];
+    itemIds.forEach((_, i) => {
+      const node = data[`i${i}`] as Parameters<SdkMarketplaceHost['toContentItem']>[0] | null;
+      if (node) items.push(this.toContentItem(node, names));
+    });
+    return items;
+  }
+
+  async assignWorkflow(items: ContentItem[], workflowId: string): Promise<AssignmentResult[]> {
+    if (items.length === 0) return [];
+    if (items.length > MAX_ASSIGN_SELECTION) {
+      throw new Error(
+        `Refusing to assign a workflow to ${items.length} items — the limit is ${MAX_ASSIGN_SELECTION} per operation.`,
+      );
+    }
+    // Fail closed: without a verified initial state there is nothing safe
+    // to write into "__Workflow state".
+    const workflows = await this.listWorkflows();
+    const wf = workflows.find((w) => w.workflowId === normalizeId(workflowId));
+    const initial = wf?.states.find((s) => s.initial);
+    if (!wf || !initial) {
+      throw new Error(
+        'The workflow or its initial state could not be verified against Sitecore, so nothing was assigned.',
+      );
+    }
+    const results: AssignmentResult[] = [];
+    for (const item of items) {
+      try {
+        await this.graphql(
+          `mutation AssignWorkflow($input: UpdateItemInput!) {
+            updateItem(input: $input) { item { itemId } }
+          }`,
+          {
+            input: {
+              itemId: item.itemId,
+              language: item.language || LANGUAGE,
+              fields: [
+                { name: '__Workflow', value: wf.workflowId },
+                { name: '__Workflow state', value: initial.stateId },
+              ],
+            },
+          },
+        );
+        results.push({
+          itemId: item.itemId,
+          name: item.name,
+          path: item.path,
+          successful: true,
+          error: null,
+        });
+      } catch (error) {
+        // Record and continue — never retry, never widen.
+        results.push({
+          itemId: item.itemId,
+          name: item.name,
+          path: item.path,
+          successful: false,
+          error: errorMessage(error),
+        });
+      }
+    }
+    return results;
   }
 
   private async resolveTemplateId(path: string): Promise<string> {

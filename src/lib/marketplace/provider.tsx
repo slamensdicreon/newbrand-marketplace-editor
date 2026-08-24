@@ -15,7 +15,17 @@ import {
   type SectionDefinition,
   type SectionValues,
 } from '@/lib/home-content';
-import type { DraftWorkflowSpec, ExecuteCommandArgs } from '@/lib/workflow/types';
+import type {
+  AssignmentResult,
+  ContentItem,
+  DraftWorkflowSpec,
+  ExecuteCommandArgs,
+} from '@/lib/workflow/types';
+import {
+  MAX_ASSIGN_SELECTION,
+  resolveAssignmentTargets,
+  validateSelection,
+} from '@/lib/workflow/types';
 import { clearAllDrafts } from '@/lib/draft-store';
 import { isEmbedded, type MarketplaceHost } from './host';
 import { MockMarketplaceHost } from './mock-host';
@@ -344,6 +354,64 @@ export function useDeleteDefinitionItem() {
     onSuccess: invalidate,
   });
 }
+
+/** Children of one content node (or the content root when null). */
+export function useContentChildren(parentId: string | null) {
+  const host = useHost();
+  const hostKey = useHostKey();
+  return useQuery({
+    queryKey: ['content-children', parentId ?? 'root', hostKey],
+    queryFn: () => host!.getContentChildren(parentId),
+    enabled: !!host,
+    staleTime: 30_000,
+  });
+}
+
+export interface AssignWorkflowOutcome {
+  results: AssignmentResult[];
+  /** Selected item ids that no longer resolved against fresh host data. */
+  stale: Array<{ itemId: string; name: string; path: string }>;
+}
+
+/**
+ * Guarded workflow assignment: validates the bounded selection, re-resolves
+ * every target id against FRESH host data immediately before applying, and
+ * returns per-item results plus stale items. Never retries or widens.
+ */
+export function useAssignWorkflow(workflowId: string | undefined) {
+  const host = useHost();
+  const hostKey = useHostKey();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (selected: ContentItem[]): Promise<AssignWorkflowOutcome> => {
+      if (!host || !workflowId) throw new Error('Not connected.');
+      const ids = selected.map((i) => i.itemId);
+      const problems = validateSelection(ids);
+      if (problems.length > 0) throw new Error(problems.join(' '));
+      const fresh = await host.getContentItems(ids);
+      const { resolved, stale } = resolveAssignmentTargets(ids, fresh);
+      const staleDetails = stale.map((id) => {
+        const original = selected.find((i) => i.itemId === id);
+        return {
+          itemId: id,
+          name: original?.name ?? id,
+          path: original?.path ?? 'unknown path',
+        };
+      });
+      const results =
+        resolved.length > 0 ? await host.assignWorkflow(resolved, workflowId) : [];
+      return { results, stale: staleDetails };
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['content-children'] });
+      void queryClient.invalidateQueries({ queryKey: ['workflow-counts'] });
+      void queryClient.invalidateQueries({ queryKey: ['workflow-queue'] });
+      void queryClient.invalidateQueries({ queryKey: ['workflow-history'] });
+    },
+  });
+}
+
+export { MAX_ASSIGN_SELECTION };
 
 export function useCreateWorkflow() {
   const host = useHost();

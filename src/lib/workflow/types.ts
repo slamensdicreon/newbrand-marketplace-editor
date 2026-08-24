@@ -95,6 +95,97 @@ export interface WorkflowGraph {
 }
 
 /* ------------------------------------------------------------------ */
+/* Content browsing & workflow assignment                              */
+/* ------------------------------------------------------------------ */
+
+/** Coarse item kind derived from the template, for browsing/filtering. */
+export type ContentItemKind = 'page' | 'folder' | 'component' | 'other';
+
+/** One Sitecore content item as shown in the assignment browser. */
+export interface ContentItem {
+  itemId: string;
+  name: string;
+  path: string;
+  templateName: string;
+  kind: ContentItemKind;
+  hasChildren: boolean;
+  language: string;
+  version: number | null;
+  /** Workflow currently governing the item, if any. */
+  workflow: { workflowId: string; displayName: string } | null;
+  /** Current workflow state of the item, if any. */
+  workflowState: { stateId: string; displayName: string } | null;
+}
+
+/** Per-item outcome of a workflow assignment. Never aggregated away. */
+export interface AssignmentResult {
+  itemId: string;
+  name: string;
+  path: string;
+  successful: boolean;
+  error: string | null;
+}
+
+/**
+ * Hard ceiling on how many items one assignment may target. There is
+ * deliberately no "apply to everything" — selection is always an explicit,
+ * bounded set.
+ */
+export const MAX_ASSIGN_SELECTION = 25;
+
+/** Classify a Sitecore template name into a coarse browsing kind. */
+export function classifyTemplate(templateName: string): ContentItemKind {
+  const name = templateName.toLowerCase();
+  if (/folder/.test(name)) return 'folder';
+  if (/page|route|home|landing/.test(name)) return 'page';
+  if (/rendering|component|datasource|hero|banner|rail|dock|section|text|image|promo|card/.test(name)) {
+    return 'component';
+  }
+  return 'other';
+}
+
+/**
+ * Validate a proposed selection against the bounded-selection rules.
+ * Returns human-readable problems; empty means the selection may proceed.
+ */
+export function validateSelection(itemIds: string[]): string[] {
+  const problems: string[] = [];
+  if (itemIds.length === 0) problems.push('Select at least one item.');
+  if (itemIds.length > MAX_ASSIGN_SELECTION) {
+    problems.push(
+      `Too many items selected (${itemIds.length}). Apply to at most ${MAX_ASSIGN_SELECTION} items at a time.`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const id of itemIds) {
+    const norm = normalizeId(id);
+    if (seen.has(norm)) problems.push('The selection contains duplicate items.');
+    seen.add(norm);
+  }
+  return problems;
+}
+
+/**
+ * Resolve a selection against FRESH host data immediately before applying.
+ * Items no longer present resolve as stale failures; nothing is widened,
+ * substituted or retried.
+ */
+export function resolveAssignmentTargets(
+  selectedIds: string[],
+  freshItems: ContentItem[],
+): { resolved: ContentItem[]; stale: string[] } {
+  const byId = new Map(freshItems.map((i) => [normalizeId(i.itemId), i] as const));
+  const resolved: ContentItem[] = [];
+  const stale: string[] = [];
+  for (const id of selectedIds) {
+    const item = byId.get(normalizeId(id));
+    if (item) resolved.push(item);
+    else stale.push(normalizeId(id));
+  }
+  return { resolved, stale };
+}
+
+/* ------------------------------------------------------------------ */
 /* Draft workflow builder                                              */
 /* ------------------------------------------------------------------ */
 

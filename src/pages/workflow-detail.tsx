@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'wouter';
-import { AlertCircle, ArrowRight, Info, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowRight, Info, ListChecks, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -185,6 +185,15 @@ export default function WorkflowDetail() {
         title={workflow?.displayName ?? 'Workflow'}
         subtitle="Definition & management"
         back={{ href: '/', label: 'Back to workflows' }}
+        right={
+          workflowId ? (
+            <Button asChild variant="outline" size="sm" data-testid="link-apply-workflow">
+              <Link href={`/workflows/${encodeURIComponent(workflowId)}/apply`}>
+                <ListChecks className="size-4" /> Apply to content
+              </Link>
+            </Button>
+          ) : undefined
+        }
       />
 
       <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-5">
