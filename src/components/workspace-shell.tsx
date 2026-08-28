@@ -4,7 +4,7 @@ import {
   CloudOff,
   ChevronRight,
   GitBranch,
-  LayoutDashboard,
+  Inbox,
   Loader2,
   MessageSquareText,
   PencilRuler,
@@ -41,7 +41,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       <header className="flex items-center gap-2 border-b border-border bg-background px-3 py-2 lg:hidden">
         <Brand compact />
         <nav className="ml-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          <TopLink href="/" label="Overview" />
+          <TopLink href="/" label="Work inbox" />
+          <TopLink href="/workflows" label="Workflows" />
           <TopLink href="/builder" label="Builder" />
         </nav>
         <Button
@@ -141,7 +142,8 @@ function NavRail() {
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-3" aria-label="Primary">
         <NavSection label="Operate">
-          <NavItem href="/" icon={LayoutDashboard} label="Overview" exact />
+          <NavItem href="/" icon={Inbox} label="Work inbox" exact />
+          <NavItem href="/workflows" icon={GitBranch} label="Workflows" exact />
         </NavSection>
 
         <NavSection label="Workflows">

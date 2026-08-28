@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
+import Inbox from '@/pages/inbox';
 import Workflows from '@/pages/workflows';
 import WorkflowQueue from '@/pages/workflow-queue';
 import WorkflowDetail from '@/pages/workflow-detail';
@@ -27,7 +28,8 @@ function Router() {
     // survives a page crash.
     <RoutedErrorBoundary>
       <Switch>
-        <Route path="/" component={Workflows} />
+        <Route path="/" component={Inbox} />
+        <Route path="/workflows" component={Workflows} />
         <Route path="/workflows/:workflowId/states/:stateId" component={WorkflowQueue} />
         <Route path="/workflows/:workflowId/apply" component={ApplyWorkflow} />
         <Route path="/workflows/:workflowId" component={WorkflowDetail} />

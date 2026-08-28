@@ -55,7 +55,7 @@ export default function WorkflowQueue() {
       <PageHeader
         title={state?.displayName ?? 'Queue'}
         subtitle={workflow?.displayName}
-        back={{ href: '/', label: 'Back to workflows' }}
+        back={{ href: '/workflows', label: 'Back to workflows' }}
       />
 
       <main className="mx-auto w-full max-w-2xl px-4 py-5">

@@ -111,7 +111,7 @@ export default function ApplyWorkflow() {
         title={workflow ? `Apply "${workflow.displayName}" to content` : 'Apply workflow'}
         subtitle="Select an explicit set of items — nothing is applied site-wide"
         back={{
-          href: workflowId ? `/workflows/${encodeURIComponent(workflowId)}` : '/',
+          href: workflowId ? `/workflows/${encodeURIComponent(workflowId)}` : '/workflows',
           label: 'Back to workflow',
         }}
       />

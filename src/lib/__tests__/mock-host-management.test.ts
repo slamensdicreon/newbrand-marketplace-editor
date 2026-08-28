@@ -84,9 +84,12 @@ describe('MockMarketplaceHost definition management', () => {
 
   it('deletes a whole workflow', async () => {
     const h = host();
-    const [wf] = await h.listWorkflows();
+    const before = await h.listWorkflows();
+    const [wf] = before;
     await h.deleteDefinitionItem(wf!.workflowId);
-    expect(await h.listWorkflows()).toHaveLength(0);
+    const after = await h.listWorkflows();
+    expect(after).toHaveLength(before.length - 1);
+    expect(after.some((w) => w.workflowId === wf!.workflowId)).toBe(false);
   });
 
   it('rejects deleting an unknown item', async () => {

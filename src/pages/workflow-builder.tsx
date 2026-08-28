@@ -99,7 +99,7 @@ export default function WorkflowBuilder() {
       <PageHeader
         title="Workflow builder"
         subtitle="Drag states and connect them to design a review flow"
-        back={{ href: '/', label: 'Back to workflows' }}
+        back={{ href: '/workflows', label: 'Back to workflows' }}
       />
 
       <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-5">

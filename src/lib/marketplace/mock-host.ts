@@ -68,13 +68,17 @@ export class MockMarketplaceHost implements MarketplaceHost {
     return counts;
   }
 
-  async getQueue(workflowId: string, stateId: string): Promise<QueuePage> {
+  async getQueue(workflowId: string, stateId: string, after?: string | null): Promise<QueuePage> {
     await delay(this.latencyMs);
     const items = this.queueItems.get(queueKey(workflowId, stateId)) ?? [];
+    const start = after ? Number(after) : 0;
+    const pageSize = 3;
+    const page = items.slice(start, start + pageSize);
+    const next = start + page.length;
     return {
-      items: items.map((i) => ({ ...i.item })),
-      hasNextPage: false,
-      endCursor: null,
+      items: page.map((i) => ({ ...i.item })),
+      hasNextPage: next < items.length,
+      endCursor: next < items.length ? String(next) : null,
     };
   }
 
@@ -458,6 +462,12 @@ const ST_APPROVED = '{FCA998C5-0CC3-4F91-94D8-0A4E6CAECE88}';
 const CMD_SUBMIT = '{CF6A557D-0B86-4432-BF47-302A18238E74}';
 const CMD_APPROVE = '{F744CC9C-4BB1-4B38-8D5C-1E9CE7F45D2D}';
 const CMD_REJECT = '{E44F2D64-1EED-42FF-A7DA-C07B834096AC}';
+const WF_LANDING = '{B1000000-0000-4000-8000-000000000001}';
+const ST_LANDING_DRAFT = '{B1000000-0000-4000-8000-000000000002}';
+const ST_LEGAL = '{B1000000-0000-4000-8000-000000000003}';
+const ST_PUBLISHED = '{B1000000-0000-4000-8000-000000000004}';
+const CMD_PUBLISH = '{B1000000-0000-4000-8000-000000000005}';
+const CMD_LEGAL_REJECT = '{B1000000-0000-4000-8000-000000000006}';
 
 function demoWorkflows(): WorkflowInfo[] {
   return [
@@ -468,6 +478,15 @@ function demoWorkflows(): WorkflowInfo[] {
         { stateId: ST_DRAFT, displayName: 'Draft', final: false, initial: true },
         { stateId: ST_AWAITING, displayName: 'Awaiting Approval', final: false, initial: false },
         { stateId: ST_APPROVED, displayName: 'Approved', final: true, initial: false },
+      ],
+    },
+    {
+      workflowId: WF_LANDING,
+      displayName: 'Landing Page Workflow',
+      states: [
+        { stateId: ST_LANDING_DRAFT, displayName: 'Draft', final: false, initial: true },
+        { stateId: ST_LEGAL, displayName: 'Legal Review', final: false, initial: false },
+        { stateId: ST_PUBLISHED, displayName: 'Published', final: true, initial: false },
       ],
     },
   ];
@@ -483,13 +502,14 @@ function demoQueueItem(
   updatedHoursAgo: number,
   updatedBy: string,
   nextStateByCommand: Record<string, string>,
+  language = 'en',
 ): DemoQueueItem {
   return {
     item: {
       itemId: randomDemoId(),
       name,
       path,
-      language: 'en',
+      language,
       version: 1,
       updatedAt: hoursAgo(updatedHoursAgo),
       updatedBy,
@@ -526,6 +546,28 @@ function demoQueueItems(): Map<string, DemoQueueItem[]> {
     ),
   ]);
   map.set(queueKey(WF_SAMPLE, ST_APPROVED), []);
+  // Landing draft deliberately has no commands: it is visible work, but is
+  // truthfully non-actionable until Sitecore exposes a transition.
+  map.set(queueKey(WF_LANDING, ST_LANDING_DRAFT), [
+    demoQueueItem(
+      'Spring Campaign Landing',
+      '/sitecore/content/brands/new-brand/Spring',
+      12,
+      'sitecore\\anna.editor',
+      {},
+      'da',
+    ),
+  ]);
+  map.set(queueKey(WF_LANDING, ST_LEGAL), [
+    demoQueueItem('Privacy Update', '/sitecore/content/brands/new-brand/Privacy', 216, 'sitecore\\legal.one', { [CMD_PUBLISH]: ST_PUBLISHED, [CMD_LEGAL_REJECT]: ST_LANDING_DRAFT }),
+    demoQueueItem('Partner Landing', '/sitecore/content/brands/new-brand/Partners', 76, 'sitecore\\anna.editor', { [CMD_PUBLISH]: ST_PUBLISHED, [CMD_LEGAL_REJECT]: ST_LANDING_DRAFT }, 'da'),
+    demoQueueItem('Summer Campaign', '/sitecore/content/brands/new-brand/Summer', 8, 'sitecore\\jon.writer', { [CMD_PUBLISH]: ST_PUBLISHED, [CMD_LEGAL_REJECT]: ST_LANDING_DRAFT }),
+    demoQueueItem('Autumn Campaign', '/sitecore/content/brands/new-brand/Autumn', 4, 'sitecore\\jon.writer', { [CMD_PUBLISH]: ST_PUBLISHED, [CMD_LEGAL_REJECT]: ST_LANDING_DRAFT }),
+  ]);
+  // A final-state fixture proves aggregation excludes completed work.
+  map.set(queueKey(WF_LANDING, ST_PUBLISHED), [
+    demoQueueItem('Published Homepage', '/sitecore/content/brands/new-brand/Published', 300, 'sitecore\\publisher', {}),
+  ]);
   return map;
 }
 
@@ -539,6 +581,12 @@ function demoCommands(): Map<string, WorkflowCommandInfo[]> {
     { commandId: CMD_REJECT, displayName: 'Reject', suppressComments: false },
   ]);
   map.set(queueKey(WF_SAMPLE, ST_APPROVED), []);
+  map.set(queueKey(WF_LANDING, ST_LANDING_DRAFT), []);
+  map.set(queueKey(WF_LANDING, ST_LEGAL), [
+    { commandId: CMD_PUBLISH, displayName: 'Publish', suppressComments: false },
+    { commandId: CMD_LEGAL_REJECT, displayName: 'Reject', suppressComments: false },
+  ]);
+  map.set(queueKey(WF_LANDING, ST_PUBLISHED), []);
   return map;
 }
 
@@ -722,6 +770,10 @@ function demoTransitions(): Map<string, WorkflowTransitionInfo[]> {
     { commandId: CMD_SUBMIT, displayName: 'Submit', fromStateId: ST_DRAFT, toStateId: ST_AWAITING },
     { commandId: CMD_APPROVE, displayName: 'Approve', fromStateId: ST_AWAITING, toStateId: ST_APPROVED },
     { commandId: CMD_REJECT, displayName: 'Reject', fromStateId: ST_AWAITING, toStateId: ST_DRAFT },
+  ]);
+  map.set(WF_LANDING, [
+    { commandId: CMD_PUBLISH, displayName: 'Publish', fromStateId: ST_LEGAL, toStateId: ST_PUBLISHED },
+    { commandId: CMD_LEGAL_REJECT, displayName: 'Reject', fromStateId: ST_LEGAL, toStateId: ST_LANDING_DRAFT },
   ]);
   return map;
 }

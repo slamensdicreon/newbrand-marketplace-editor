@@ -132,6 +132,8 @@ export interface AssignmentResult {
  * bounded set.
  */
 export const MAX_ASSIGN_SELECTION = 25;
+/** Hard ceiling for an explicit inbox command batch. */
+export const MAX_BULK_SELECTION = 25;
 
 /** Classify a Sitecore template name into a coarse browsing kind. */
 export function classifyTemplate(templateName: string): ContentItemKind {

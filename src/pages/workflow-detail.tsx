@@ -184,7 +184,7 @@ export default function WorkflowDetail() {
       <PageHeader
         title={workflow?.displayName ?? 'Workflow'}
         subtitle="Definition & management"
-        back={{ href: '/', label: 'Back to workflows' }}
+        back={{ href: '/workflows', label: 'Back to workflows' }}
         right={
           workflowId ? (
             <Button asChild variant="outline" size="sm" data-testid="link-apply-workflow">
