@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   data: { entries: [] as WorkInboxEntry[], remainders: [] },
   host: {
     getQueue: vi.fn(),
+    getStateCommands: vi.fn(),
     executeCommand: vi.fn(),
   },
 }));
@@ -86,7 +87,9 @@ function renderInbox() {
 beforeEach(() => {
   sessionStorage.clear();
   mocks.host.getQueue.mockReset();
+  mocks.host.getStateCommands.mockReset();
   mocks.host.executeCommand.mockReset();
+  mocks.host.getStateCommands.mockResolvedValue([command]);
   mocks.data = {
     entries: [
       makeEntry('stale-one'),
@@ -226,5 +229,59 @@ describe('Work inbox', () => {
     expect(mocks.host.getQueue).toHaveBeenCalledTimes(3);
     expect(mocks.host.executeCommand).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('result-stale-fresh-three')).toBeTruthy();
+  });
+
+  it('still executes an item that was pushed past the first fresh page', async () => {
+    renderInbox();
+    fireEvent.click(screen.getByTestId('checkbox-inbox-stale-one'));
+    fireEvent.click(screen.getByTestId('button-bulk-approve'));
+
+    // Fresh read: page one is full of concurrently added items; the selected
+    // item now lives on page two. Only paginated re-resolution finds it.
+    mocks.host.getQueue.mockImplementation(async (_wf: string, _st: string, after?: string | null) => {
+      if (!after) {
+        return {
+          items: Array.from({ length: 25 }, (_, i) => ({
+            itemId: `new-${i}`,
+            name: `New ${i}`,
+            path: `/content/new-${i}`,
+            language: 'en',
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            updatedBy: 'sitecore\\other',
+          })),
+          hasNextPage: true,
+          endCursor: 'page-2',
+        };
+      }
+      return {
+        items: mocks.data.entries.map((entry) => entry.item),
+        hasNextPage: false,
+        endCursor: null,
+      };
+    });
+    fireEvent.click(screen.getByTestId('button-confirm-bulk'));
+
+    await waitFor(() => expect(screen.getByText(/1 succeeded, 0 failed, 0 skipped/)).toBeTruthy());
+    expect(mocks.host.executeCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips with a precise outcome when the command becomes unavailable mid-run', async () => {
+    renderInbox();
+    fireEvent.click(screen.getByTestId('checkbox-inbox-stale-one'));
+    fireEvent.click(screen.getByTestId('checkbox-inbox-fresh-three'));
+    fireEvent.click(screen.getByTestId('button-bulk-approve'));
+
+    // Approve is revoked after the first item's write.
+    mocks.host.getStateCommands
+      .mockResolvedValueOnce([command])
+      .mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByTestId('button-confirm-bulk'));
+
+    await waitFor(() => expect(screen.getByText(/1 succeeded, 1 failed, 0 skipped/)).toBeTruthy());
+    expect(mocks.host.executeCommand).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('result-failed-fresh-three').textContent).toContain(
+      'no longer available',
+    );
   });
 });

@@ -3,6 +3,7 @@ import {
   compareInboxEntries,
   inboxItemKey,
   intersectCommands,
+  resolveQueueMembership,
   prioritizationReason,
   type WorkInboxEntry,
 } from '@/lib/inbox';
@@ -65,6 +66,33 @@ describe('work inbox helpers', () => {
       ]),
     ).toEqual([approve]);
     expect(intersectCommands([entry('a', null, 'unknown', [approve]), entry('b', null, 'unknown', [reject])])).toEqual([]);
+  });
+
+  it('resolves queue membership across pages and reports authoritative absence', async () => {
+    const pages = new Map([
+      [
+        'first',
+        { items: [{ itemId: 'other', language: 'en', version: 1 }], hasNextPage: true, endCursor: 'c1' },
+      ],
+      [
+        'c1',
+        { items: [{ itemId: 'target', language: 'en', version: 1 }], hasNextPage: false, endCursor: null },
+      ],
+    ]);
+    const host = {
+      getQueue: async (_wf: string, _st: string, after?: string | null) =>
+        pages.get(after ?? 'first')! as never,
+    };
+    const key = inboxItemKey({ itemId: 'target', language: 'en', version: 1 });
+    await expect(resolveQueueMembership(host, 'wf', 'st', key)).resolves.toBe('present');
+    await expect(
+      resolveQueueMembership(host, 'wf', 'st', inboxItemKey({ itemId: 'missing', language: 'en', version: 1 })),
+    ).resolves.toBe('absent');
+    const endless = {
+      getQueue: async () =>
+        ({ items: [], hasNextPage: true, endCursor: 'next' }) as never,
+    };
+    await expect(resolveQueueMembership(endless, 'wf', 'st', key, 3)).resolves.toBe('unresolved');
   });
 
   it('creates human-readable reasons without inventing an age', () => {

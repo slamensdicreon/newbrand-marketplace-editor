@@ -21,6 +21,7 @@ import {
   compareInboxEntries,
   inboxItemKey,
   intersectCommands,
+  resolveQueueMembership,
   useWorkInbox,
   type WorkInboxEntry,
 } from '@/lib/inbox';
@@ -141,15 +142,41 @@ export default function Inbox() {
         );
       }
       for (const entry of selectedItems) {
-        // Re-resolve THIS item against a fresh queue read immediately before
-        // its own write. Items that changed state mid-run are skipped —
+        // Re-resolve THIS identity immediately before its own write, walking
+        // the queue's pages so "no longer in state" is only reported after an
+        // authoritative absence. Items that changed state mid-run are skipped —
         // never substituted, retried, or widened.
-        const fresh = await host.getQueue(entry.workflow.workflowId, entry.state.stateId, null);
-        const stillPresent = fresh.items.some(
-          (item) => inboxItemKey(item) === inboxItemKey(entry.item),
+        const membership = await resolveQueueMembership(
+          host,
+          entry.workflow.workflowId,
+          entry.state.stateId,
+          inboxItemKey(entry.item),
         );
-        if (!stillPresent) {
+        if (membership === 'unresolved') {
+          outcomes.push({
+            entry,
+            status: 'failed',
+            error:
+              'Could not confirm the item is still in this state (queue too deep to verify); nothing was executed for it.',
+          });
+          continue;
+        }
+        if (membership === 'absent') {
           outcomes.push({ entry, status: 'stale' });
+          continue;
+        }
+        // Refresh the state's available commands right before the write; a
+        // command revoked mid-run is skipped with a precise outcome.
+        const freshCommands = await host.getStateCommands(
+          entry.workflow.workflowId,
+          entry.state.stateId,
+        );
+        if (!freshCommands.some((candidate) => candidate.commandId === command.commandId)) {
+          outcomes.push({
+            entry,
+            status: 'failed',
+            error: `The "${command.displayName}" command is no longer available for this state; nothing was executed for it.`,
+          });
           continue;
         }
         try {

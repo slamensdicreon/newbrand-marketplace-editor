@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useHost, useHostKey } from '@/lib/marketplace/provider';
+import type { MarketplaceHost } from '@/lib/marketplace/host';
 import {
   ageBucket,
   formatAge,
@@ -81,6 +82,34 @@ export function prioritizationReason(
   return urgency === 'unknown'
     ? `${prefix} — in ${stateName}`
     : `${prefix} — ${formatAge(updatedAt)} in ${stateName}`;
+}
+
+/** Safety cap so a pathological queue can never turn one write into an unbounded scan. */
+export const MAX_MEMBERSHIP_PAGES = 40;
+
+export type QueueMembership = 'present' | 'absent' | 'unresolved';
+
+/**
+ * Authoritatively resolve whether one selected identity is still in its state
+ * by walking the queue's pages. Returns 'absent' only after the full queue has
+ * been read; if the page cap is hit first, returns 'unresolved' so the caller
+ * can skip the write with a precise reason instead of guessing either way.
+ */
+export async function resolveQueueMembership(
+  host: Pick<MarketplaceHost, 'getQueue'>,
+  workflowId: string,
+  stateId: string,
+  itemKey: string,
+  maxPages = MAX_MEMBERSHIP_PAGES,
+): Promise<QueueMembership> {
+  let after: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await host.getQueue(workflowId, stateId, after);
+    if (result.items.some((item) => inboxItemKey(item) === itemKey)) return 'present';
+    if (!result.hasNextPage || !result.endCursor) return 'absent';
+    after = result.endCursor;
+  }
+  return 'unresolved';
 }
 
 /**
