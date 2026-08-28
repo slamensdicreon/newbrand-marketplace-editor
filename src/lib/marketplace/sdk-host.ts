@@ -1,5 +1,16 @@
 import { ClientSDK } from '@sitecore-marketplace-sdk/client';
 import { XMC } from '@sitecore-marketplace-sdk/xmc';
+import { AI } from '@sitecore-marketplace-sdk/ai';
+import {
+  contentFingerprint,
+  extractPlainText,
+  isReviewableFieldName,
+  limitReviewEntries,
+  type BrandReviewSectionResult,
+  type BrandReviewSupport,
+  type ReviewContent,
+  type ReviewContentEntry,
+} from '@/lib/workflow/brand-review';
 import {
   classifyTemplate,
   normalizeId,
@@ -159,7 +170,7 @@ export class SdkMarketplaceHost implements MarketplaceHost {
         origin,
         target: window.parent,
         timeout: HANDSHAKE_TIMEOUT_MS,
-        modules: [XMC],
+        modules: [XMC, AI],
       });
     } catch (error) {
       throw new HostUnavailableError(handshakeFailureMessage(error));
@@ -525,6 +536,171 @@ export class SdkMarketplaceHost implements MarketplaceHost {
           }
         : null,
     };
+  }
+
+  /* ---------------- Brand Review (advisory AI quality checks) ---------------- */
+
+  async getBrandReviewSupport(): Promise<BrandReviewSupport> {
+    try {
+      const result = await this.client.query('xmc.sites.listSites', {
+        params: { query: { sitecoreContextId: this.sitecoreContextId } },
+      });
+      const payload = (result as { data?: unknown }).data ?? result;
+      const sites = (Array.isArray(payload)
+        ? payload
+        : ((payload as { data?: unknown[] })?.data ?? [])) as Array<{
+        name?: string;
+        brandKitId?: string | null;
+      }>;
+      const withKit = sites.find((site) => site.brandKitId);
+      if (!withKit?.brandKitId) {
+        return {
+          available: false,
+          brandKitId: null,
+          message:
+            'No brand kit is connected to any site in this environment. Connect a brand kit in Sitecore to enable AI quality checks.',
+        };
+      }
+      return { available: true, brandKitId: withKit.brandKitId, message: null };
+    } catch (error) {
+      return {
+        available: false,
+        brandKitId: null,
+        message: `Could not determine Brand Review availability: ${error instanceof Error ? error.message : 'unknown error'}`,
+      };
+    }
+  }
+
+  async getItemReviewContent(itemId: string, language: string): Promise<ReviewContent | null> {
+    const data = await this.graphql(
+      `query ItemReviewContent($itemId: ID!, $language: String!) {
+        item(where: { itemId: $itemId, language: $language }) {
+          itemId
+          name
+          version
+          updated: field(name: "__Updated") { value }
+          fields(ownFields: true) { nodes { name value } }
+          children(first: 30) {
+            nodes {
+              name
+              template { name }
+              fields(ownFields: true) { nodes { name value } }
+              children(first: 30) {
+                nodes {
+                  name
+                  template { name }
+                  fields(ownFields: true) { nodes { name value } }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { itemId, language },
+    );
+    interface ReviewNode {
+      name: string;
+      template?: { name?: string } | null;
+      fields?: { nodes?: Array<{ name: string; value?: string | null }> };
+      children?: { nodes?: ReviewNode[] };
+    }
+    const item = data['item'] as
+      | (ReviewNode & {
+          itemId: string;
+          version: number | null;
+          updated?: { value?: string } | null;
+        })
+      | null;
+    if (!item) return null;
+
+    const entries: ReviewContentEntry[] = [];
+    for (const field of item.fields?.nodes ?? []) {
+      if (!isReviewableFieldName(field.name)) continue;
+      const text = extractPlainText(field.value);
+      if (text) entries.push({ source: 'field', label: field.name, text });
+    }
+    // Datasource selection rule: only descendants that are actual local
+    // datasources are submitted — direct children whose template classifies
+    // as a component, plus component items inside a direct "Data" folder
+    // (the SXA local-datasource convention). Child pages, folders of other
+    // kinds, and anything deeper are excluded so unrelated content never
+    // leaves the item's own scope.
+    const addDatasource = (node: ReviewNode) => {
+      for (const field of node.fields?.nodes ?? []) {
+        if (!isReviewableFieldName(field.name)) continue;
+        const text = extractPlainText(field.value);
+        if (text) {
+          entries.push({ source: 'datasource', label: `${node.name} · ${field.name}`, text });
+        }
+      }
+    };
+    for (const child of item.children?.nodes ?? []) {
+      const kind = classifyTemplate(child.template?.name ?? '');
+      if (kind === 'component') {
+        addDatasource(child);
+      } else if (kind === 'folder' && /^data$/i.test(child.name)) {
+        for (const grandchild of child.children?.nodes ?? []) {
+          if (classifyTemplate(grandchild.template?.name ?? '') === 'component') {
+            addDatasource(grandchild);
+          }
+        }
+      }
+    }
+    const limited = limitReviewEntries(entries);
+    return {
+      itemId: normalizeId(item.itemId),
+      language,
+      version: item.version ?? null,
+      updatedAt: parseSitecoreDate(item.updated?.value),
+      entries: limited.entries,
+      truncated: limited.truncated,
+    };
+  }
+
+  async generateBrandReview(
+    brandKitId: string,
+    content: ReviewContent,
+  ): Promise<BrandReviewSectionResult[]> {
+    // Read-only with respect to Sitecore: this generates an analysis of
+    // the submitted text and never touches content or workflow state.
+    const input: Record<string, string> = {};
+    content.entries.forEach((entry, index) => {
+      // Keys must be unique and stable; the API echoes them as fieldIds.
+      input[`${index + 1}. ${entry.label}`] = entry.text;
+    });
+    if (Object.keys(input).length === 0) {
+      throw new Error('This item has no reviewable text content.');
+    }
+    const result = await this.client.mutate('ai.skills.generateBrandReview', {
+      params: {
+        query: { sitecoreContextId: this.sitecoreContextId },
+        body: { brandkitId: brandKitId, input },
+      },
+    });
+    const payload = (result as { data?: unknown }).data ?? result;
+    const reviews = ((payload as { reviews?: unknown[] })?.reviews ??
+      ((payload as { data?: { reviews?: unknown[] } })?.data?.reviews ?? [])) as Array<{
+      sectionId?: string;
+      score?: number;
+      reason?: string;
+      suggestion?: string;
+      fields?: Array<{ fieldId?: string; score?: number; reason?: string; suggestion?: string }>;
+    }>;
+    if (!Array.isArray(reviews) || reviews.length === 0) {
+      throw new Error('Brand Review returned no analysis for this content.');
+    }
+    return reviews.map((section, i) => ({
+      sectionId: section.sectionId ?? `section-${i + 1}`,
+      score: typeof section.score === 'number' ? section.score : 0,
+      reason: section.reason ?? '',
+      suggestion: section.suggestion ?? '',
+      fields: (section.fields ?? []).map((field, j) => ({
+        fieldId: field.fieldId ?? `field-${j + 1}`,
+        score: typeof field.score === 'number' ? field.score : 0,
+        reason: field.reason ?? '',
+        suggestion: field.suggestion ?? '',
+      })),
+    }));
   }
 
   async createDraftWorkflow(spec: DraftWorkflowSpec): Promise<{ workflowId: string }> {

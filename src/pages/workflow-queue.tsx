@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'wouter';
-import { AlertCircle, Clock, History, Inbox, User } from 'lucide-react';
+import { AlertCircle, Clock, History, Inbox, Sparkles, User } from 'lucide-react';
+import { BrandReviewPanel, BrandReviewConfirmSummary } from '@/components/brand-review';
+import type { BrandReviewResult } from '@/lib/workflow/brand-review';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +22,7 @@ import { toast } from 'sonner';
 import {
   useExecuteCommand,
   useItemHistory,
+  useItemWorkflowStatus,
   useStateCommands,
   useWorkflowQueue,
   useWorkflows,
@@ -136,10 +139,24 @@ function QueueItemCard({
   commandsLoading: boolean;
 }) {
   const [showHistory, setShowHistory] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [review, setReview] = useState<BrandReviewResult | null>(null);
   const [pendingCommand, setPendingCommand] = useState<WorkflowCommandInfo | null>(null);
   const [comments, setComments] = useState('');
   const execute = useExecuteCommand(workflowId);
   const bucket = ageBucket(item.updatedAt);
+  // Once a review exists, staleness must be judged against the item's
+  // CURRENT __Updated value, not the queue snapshot loaded earlier.
+  const freshStatus = useItemWorkflowStatus(review ? item.itemId : undefined, item.language);
+  const currentUpdatedAt = review
+    ? (freshStatus.data?.updatedAt ?? item.updatedAt)
+    : item.updatedAt;
+  const handleReview = (result: BrandReviewResult) => {
+    setReview(result);
+    // Re-resolve the item's updated timestamp so a just-generated review
+    // is compared against equally fresh item state.
+    void freshStatus.refetch();
+  };
 
   const confirm = () => {
     if (!pendingCommand) return;
@@ -237,12 +254,30 @@ function QueueItemCard({
           size="sm"
           variant="ghost"
           className="ml-auto"
+          onClick={() => setShowReview((v) => !v)}
+          data-testid={`button-brand-review-${item.itemId}`}
+        >
+          <Sparkles className="size-4" /> AI check
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
           onClick={() => setShowHistory((v) => !v)}
           data-testid={`button-history-${item.itemId}`}
         >
           <History className="size-4" /> History
         </Button>
       </div>
+
+      {showReview && (
+        <BrandReviewPanel
+          itemId={item.itemId}
+          language={item.language}
+          itemUpdatedAt={currentUpdatedAt}
+          review={review}
+          onReview={handleReview}
+        />
+      )}
 
       {showHistory && (
         <ItemHistory workflowId={workflowId} itemId={item.itemId} language={item.language} />
@@ -267,6 +302,7 @@ function QueueItemCard({
               {item.version != null ? `, v${item.version}` : ''}).
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <BrandReviewConfirmSummary review={review} itemUpdatedAt={currentUpdatedAt} />
           {pendingCommand && !pendingCommand.suppressComments && (
             <Textarea
               placeholder="Optional comment for the workflow history…"

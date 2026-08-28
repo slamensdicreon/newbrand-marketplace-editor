@@ -20,6 +20,7 @@ import {
   resolveAssignmentTargets,
   validateSelection,
 } from '@/lib/workflow/types';
+import { contentFingerprint, type BrandReviewResult } from '@/lib/workflow/brand-review';
 import {
   isEmbedded,
   type ItemWorkflowStatus,
@@ -259,6 +260,59 @@ export function useItemWorkflowStatus(itemId: string | undefined, language: stri
 }
 
 export type { ItemWorkflowStatus, PageContextInfo };
+
+/* ---------------- Brand Review hooks (advisory only) ---------------- */
+
+/** Whether Brand Review can run against the connected organization. */
+export function useBrandReviewSupport() {
+  const host = useHost();
+  const hostKey = useHostKey();
+  return useQuery({
+    queryKey: ['brand-review-support', hostKey],
+    queryFn: () => host!.getBrandReviewSupport(),
+    enabled: !!host,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Run a Brand Review analysis for one item. Purely advisory: the
+ * resulting scores are shown to the reviewer and NEVER executed against
+ * workflow commands. The mutation aborts (rather than reporting a result
+ * for the wrong host) if the active host changes while it runs.
+ */
+export function useGenerateBrandReview() {
+  const host = useHost();
+  const hostKey = useHostKey();
+  const { status } = useMarketplace();
+  const isDemo = status.state !== 'live';
+  return useMutation({
+    mutationFn: async (args: { itemId: string; language: string }): Promise<BrandReviewResult> => {
+      if (!host) throw new Error('Not connected.');
+      const support = await host.getBrandReviewSupport();
+      if (getActiveHostKey() !== hostKey) throw new Error('Connection changed. Try again.');
+      if (!support.available || !support.brandKitId) {
+        throw new Error(support.message ?? 'Brand Review is not available.');
+      }
+      const content = await host.getItemReviewContent(args.itemId, args.language);
+      if (getActiveHostKey() !== hostKey) throw new Error('Connection changed. Try again.');
+      if (!content) throw new Error('The item could not be read.');
+      if (content.entries.length === 0) {
+        throw new Error('This item has no reviewable text content.');
+      }
+      const sections = await host.generateBrandReview(support.brandKitId, content);
+      if (getActiveHostKey() !== hostKey) throw new Error('Connection changed. Try again.');
+      return {
+        generatedAt: new Date().toISOString(),
+        fingerprint: contentFingerprint(content),
+        contentUpdatedAt: content.updatedAt,
+        demo: isDemo,
+        truncated: content.truncated,
+        sections,
+      };
+    },
+  });
+}
 
 /* ---------------- Workflow hooks ---------------- */
 

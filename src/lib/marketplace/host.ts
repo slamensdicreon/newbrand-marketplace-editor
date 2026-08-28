@@ -1,4 +1,9 @@
 import type {
+  BrandReviewSectionResult,
+  BrandReviewSupport,
+  ReviewContent,
+} from '@/lib/workflow/brand-review';
+import type {
   AssignmentResult,
   CommandResult,
   ContentItem,
@@ -99,6 +104,29 @@ export interface MarketplaceHost {
    * read). Called immediately before any command run from the page panel.
    */
   getItemWorkflowStatus(itemId: string, language: string): Promise<ItemWorkflowStatus | null>;
+
+  /* ---- Brand Review AI quality checks (advisory, read-only) ----
+   * Results NEVER execute, block, or override workflow commands. The
+   * host gathers only the item's own text (plus direct datasource text)
+   * through authorized Sitecore APIs, applies size limits, and submits
+   * that material to the Brand Review skill. */
+
+  /** Whether Brand Review can run in the connected organization. */
+  getBrandReviewSupport(): Promise<BrandReviewSupport>;
+  /**
+   * Gather the reviewable text of one item (own fields + direct
+   * datasource children), already limited to the request-size caps.
+   * Null when the item cannot be read.
+   */
+  getItemReviewContent(itemId: string, language: string): Promise<ReviewContent | null>;
+  /**
+   * Run the Brand Review skill over gathered content. Read-only with
+   * respect to Sitecore content and workflow state.
+   */
+  generateBrandReview(
+    brandKitId: string,
+    content: ReviewContent,
+  ): Promise<BrandReviewSectionResult[]>;
   /**
    * Create a new draft workflow definition (workflow, states, transition
    * commands) under /sitecore/system/Workflows. Returns the new workflow id.

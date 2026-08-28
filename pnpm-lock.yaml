@@ -11,6 +11,9 @@ importers:
       '@mdi/js':
         specifier: ^7.4.47
         version: 7.4.47
+      '@sitecore-marketplace-sdk/ai':
+        specifier: 0.1.1
+        version: 0.1.1(@sitecore-marketplace-sdk/client@0.3.6)
       '@sitecore-marketplace-sdk/client':
         specifier: 0.3.6
         version: 0.3.6
@@ -1403,6 +1406,11 @@ packages:
     resolution: {integrity: sha512-/gDJaRs4gl0NPIwqCz+6PkpmhhjRAD2j6P4rSNHBzUkO3naEx2mIU0pRle1vUNRQ7mE/+8OOeXLTv/J56FKiQg==}
     cpu: [x64]
     os: [win32]
+
+  '@sitecore-marketplace-sdk/ai@0.1.1':
+    resolution: {integrity: sha512-FjaQATyKV2Vih222n+kPTTexibMZ8Tp/R+4YrVW7c7ivy6d0IJk/ZzO0xe9uN26ciqvGqieJfME+yAMAWyHxxg==}
+    peerDependencies:
+      '@sitecore-marketplace-sdk/client': ^0.3.2
 
   '@sitecore-marketplace-sdk/client@0.3.6':
     resolution: {integrity: sha512-E9HoD2qJvjpyCwJhI0/D3hP6LEGQ+968qYwQuE7WPex0JcFXFwPqh+CEBi3mQCtjHFREgL38SxcUfwpAuW8rsw==}
@@ -3620,6 +3628,11 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.62.5':
     optional: true
+
+  '@sitecore-marketplace-sdk/ai@0.1.1(@sitecore-marketplace-sdk/client@0.3.6)':
+    dependencies:
+      '@hey-api/client-fetch': 0.8.3
+      '@sitecore-marketplace-sdk/client': 0.3.6
 
   '@sitecore-marketplace-sdk/client@0.3.6':
     dependencies:

@@ -34,6 +34,25 @@ authorization. There is no sign-in, sign-up, password, token storage, or
 direct credential flow in this app. The previous Clerk-based editor
 authentication was removed when the app became Marketplace-hosted.
 
+## Required Marketplace access
+
+The Marketplace registration for this app must grant access to:
+
+- **XM Cloud Authoring API** (`xmc.authoring.graphql`) — workflow queues,
+  commands, history, and gathering item text for reviews.
+- **XM Cloud Sites API** (`xmc.sites.listSites`) — resolving the brand kit
+  connected to the environment's sites.
+- **Sitecore AI skills — Brand Review** (`ai.skills.generateBrandReview`,
+  Marketplace SDK `@sitecore-marketplace-sdk/ai`) — advisory AI quality
+  checks. Requires a Stream subscription and a brand kit connected to a
+  site. Update the existing app installation after adding this grant.
+
+AI results are **advisory only**: they inform the reviewer and are shown in
+approval confirmations, but they never execute, block, or override workflow
+commands, and the app never lets AI approve, reject, publish, or rewrite
+content. Review requests submit only the item's own text (plus direct
+datasource text), bounded by size limits.
+
 ## Routes
 
 - `/` — workflow command center (big-number metrics, queues, workflow list)

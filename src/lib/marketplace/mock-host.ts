@@ -23,6 +23,16 @@ import {
   type WorkflowInfo,
   type WorkflowTransitionInfo,
 } from '@/lib/workflow/types';
+import {
+  contentFingerprint,
+  limitReviewEntries,
+  type BrandReviewSectionResult,
+  type BrandReviewSupport,
+  type ReviewContent,
+} from '@/lib/workflow/brand-review';
+
+/** Demo brand kit id shown in demo mode; not a real Sitecore brand kit. */
+const DEMO_BRAND_KIT_ID = '{DEMO0000-BRAND-KIT0-0000-000000000000}';
 
 /**
  * Demo host for local preview. The Replit preview does not run inside
@@ -559,6 +569,93 @@ export class MockMarketplaceHost implements MarketplaceHost {
           ? { ...decorated.workflowState, final: false }
           : null,
     };
+  }
+
+  /* ---------------- Brand Review (deterministic demo samples) ---------------- */
+
+  async getBrandReviewSupport(): Promise<BrandReviewSupport> {
+    await delay(this.latencyMs);
+    return { available: true, brandKitId: DEMO_BRAND_KIT_ID, message: null };
+  }
+
+  async getItemReviewContent(itemId: string, language: string): Promise<ReviewContent | null> {
+    await delay(this.latencyMs);
+    const id = normalizeId(itemId);
+    let name: string | null = null;
+    let version: number | null = null;
+    let updatedAt: string | null = null;
+    for (const items of this.queueItems.values()) {
+      const entry = items.find((i) => i.item.itemId === id);
+      if (entry) {
+        name = entry.item.name;
+        version = entry.item.version;
+        updatedAt = entry.item.updatedAt;
+        break;
+      }
+    }
+    if (!name) {
+      const node = this.findContentNode(id);
+      if (!node) return null;
+      name = node.item.name;
+      version = node.item.version;
+    }
+    // Deterministic sample copy — clearly not live Sitecore field data.
+    const entries = limitReviewEntries([
+      { source: 'field', label: 'Title', text: name },
+      {
+        source: 'field',
+        label: 'Body',
+        text: `Demo sample copy for "${name}". This text stands in for the item's real fields while the app runs in demo mode.`,
+      },
+      {
+        source: 'datasource',
+        label: `${name} Hero · Headline`,
+        text: `Discover ${name} — a demo headline used for sample AI analysis.`,
+      },
+    ]);
+    return {
+      itemId: id,
+      language,
+      version,
+      updatedAt,
+      entries: entries.entries,
+      truncated: entries.truncated,
+    };
+  }
+
+  async generateBrandReview(
+    _brandKitId: string,
+    content: ReviewContent,
+  ): Promise<BrandReviewSectionResult[]> {
+    await delay(this.latencyMs);
+    // Deterministic: same content always yields the same sample scores.
+    const fp = contentFingerprint(content);
+    let seed = 0;
+    for (let i = 0; i < fp.length; i++) seed = (seed * 31 + fp.charCodeAt(i)) | 0;
+    const score = (offset: number) => 2 + Math.abs(seed + offset) % 4; // 2..5
+    const sections: Array<{ id: string; focus: string }> = [
+      { id: 'voice-and-tone', focus: 'voice and tone' },
+      { id: 'terminology', focus: 'terminology' },
+      { id: 'messaging', focus: 'messaging' },
+    ];
+    return sections.map((section, i) => {
+      const s = score(i * 7);
+      return {
+        sectionId: section.id,
+        score: s,
+        reason: `Demo sample analysis: the reviewed copy scores ${s}/5 for ${section.focus} against the demo brand kit. This is not a live AI review.`,
+        suggestion:
+          s >= 4
+            ? `Demo suggestion: keep the current ${section.focus} approach.`
+            : `Demo suggestion: tighten the ${section.focus} to match the demo brand guidelines.`,
+        fields: content.entries.slice(0, 2).map((entry, j) => ({
+          fieldId: entry.label,
+          score: score(i * 7 + j + 3),
+          reason: `Demo sample note for "${entry.label}".`,
+          suggestion: `Demo suggestion for "${entry.label}".`,
+        })),
+      };
+    });
   }
 
   destroy(): void {

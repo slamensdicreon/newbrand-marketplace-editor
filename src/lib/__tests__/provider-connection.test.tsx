@@ -58,6 +58,9 @@ function liveHostStub(): MarketplaceHost & { destroyed: boolean } {
     subscribePageContext: () => () => undefined,
     subscribeContentUpdates: () => () => undefined,
     getItemWorkflowStatus: async () => null,
+    getBrandReviewSupport: async () => ({ available: false, brandKitId: null, message: 'n/a' }),
+    getItemReviewContent: async () => null,
+    generateBrandReview: async () => [],
     destroy() {
       this.destroyed = true;
     },
