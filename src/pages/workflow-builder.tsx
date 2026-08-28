@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
-import { AlertCircle, Info, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowRight, HelpCircle, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,44 +10,28 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useCreateWorkflow, useWorkflows } from '@/lib/marketplace/provider';
-import { WorkflowCanvas } from '@/components/workflow-canvas';
+import { BuilderCanvas, type BuilderSelection } from '@/components/builder-canvas';
 import {
-  validateDraftWorkflow,
-  type DraftState,
-  type DraftTransition,
-  type DraftWorkflowSpec,
-  type WorkflowGraph,
-} from '@/lib/workflow/types';
-
-let keyCounter = 0;
-function nextKey(): string {
-  keyCounter += 1;
-  return `s${keyCounter}`;
-}
-
-function defaultStates(): DraftState[] {
-  return [
-    { key: nextKey(), name: 'Draft', initial: true, final: false },
-    { key: nextKey(), name: 'Awaiting Approval', initial: false, final: false },
-    { key: nextKey(), name: 'Approved', initial: false, final: true },
-  ];
-}
-
-function defaultTransitions(states: DraftState[]): DraftTransition[] {
-  return [
-    { name: 'Submit', fromKey: states[0]!.key, toKey: states[1]!.key },
-    { name: 'Approve', fromKey: states[1]!.key, toKey: states[2]!.key },
-    { name: 'Reject', fromKey: states[1]!.key, toKey: states[0]!.key },
-  ];
-}
+  addState,
+  connectStates,
+  defaultDraft,
+  moveState,
+  removeState,
+  removeTransition,
+  toSpec,
+  updateState,
+  updateTransition,
+  type BuilderDraft,
+} from '@/lib/workflow/builder-draft';
+import { validateDraftWorkflow } from '@/lib/workflow/types';
 
 /**
- * Starter workflow builder. Creates real workflow definitions (workflow,
- * states, transition commands) under /sitecore/system/Workflows using the
- * standard Sitecore templates. Deliberately does NOT edit or delete
- * existing workflows, reorder states, or manage workflow actions — the
- * Authoring API has no first-class operations for those, so they stay in
- * native Sitecore tools instead of being faked here.
+ * Drag-and-drop workflow builder. Compose states and transitions visually,
+ * then create a REAL workflow definition (workflow, states, transition
+ * commands) under /sitecore/system/Workflows. Deliberately does NOT edit or
+ * delete existing workflows, reorder states, or manage workflow actions —
+ * the Authoring API has no first-class operations for those, so they stay
+ * in native Sitecore tools instead of being faked here.
  */
 export default function WorkflowBuilder() {
   const [, navigate] = useLocation();
@@ -55,60 +39,46 @@ export default function WorkflowBuilder() {
   const create = useCreateWorkflow();
 
   const [name, setName] = useState('');
-  // One snapshot per mount so the default transitions reference the same
-  // state keys as the default states.
-  const [initialDraft] = useState(() => {
-    const s = defaultStates();
-    return { states: s, transitions: defaultTransitions(s) };
-  });
-  const [states, setStates] = useState<DraftState[]>(initialDraft.states);
-  const [transitions, setTransitions] = useState<DraftTransition[]>(initialDraft.transitions);
+  const [draft, setDraft] = useState<BuilderDraft>(() => defaultDraft());
+  const [selection, setSelection] = useState<BuilderSelection>(null);
 
-  const spec: DraftWorkflowSpec = useMemo(
-    () => ({ name, states, transitions }),
-    [name, states, transitions],
-  );
-  // Live diagram of the draft: state keys stand in for state ids.
-  const draftGraph: WorkflowGraph = useMemo(
-    () => ({
-      workflowId: 'draft',
-      states: states.map((s) => ({
-        stateId: s.key,
-        displayName: s.name.trim() || '(unnamed)',
-        initial: s.initial,
-        final: s.final,
-      })),
-      transitions: transitions.map((t, i) => ({
-        commandId: `t${i}`,
-        displayName: t.name.trim() || '(unnamed)',
-        fromStateId: t.fromKey,
-        toStateId: t.toKey,
-      })),
-    }),
-    [states, transitions],
-  );
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const spec = useMemo(() => toSpec(draft, name), [draft, name]);
   const problems = useMemo(() => validateDraftWorkflow(spec), [spec]);
   const existingNames = new Set(
     (workflows.data ?? []).map((w) => w.displayName.trim().toLowerCase()),
   );
   const duplicateName = name.trim() !== '' && existingNames.has(name.trim().toLowerCase());
 
-  const updateState = (key: string, patch: Partial<DraftState>) => {
-    setStates((prev) =>
-      prev.map((s) => {
-        if (s.key !== key) {
-          // Only one initial state: setting one clears the others.
-          return patch.initial ? { ...s, initial: false } : s;
-        }
-        return { ...s, ...patch };
-      }),
-    );
+  const selectedState =
+    selection?.kind === 'state' ? draft.states.find((s) => s.key === selection.key) ?? null : null;
+  const selectedTransition =
+    selection?.kind === 'transition' ? draft.transitions[selection.index] ?? null : null;
+
+  const onAddState = () => {
+    const { draft: next, key } = addState(draft);
+    setDraft(next);
+    setSelection({ kind: 'state', key });
   };
 
-  const removeState = (key: string) => {
-    setStates((prev) => prev.filter((s) => s.key !== key));
-    setTransitions((prev) => prev.filter((t) => t.fromKey !== key && t.toKey !== key));
+  const onConnect = (fromKey: string, toKey: string) => {
+    const result = connectStates(draft, fromKey, toKey);
+    if (result.problem) {
+      toast.error(result.problem);
+      return;
+    }
+    setDraft(result.draft);
+    // Select the new edge so the command name can be typed immediately.
+    setSelection({ kind: 'transition', index: result.index });
+  };
+
+  const onRemoveState = (key: string) => {
+    setDraft((prev) => removeState(prev, key));
+    setSelection(null);
+  };
+
+  const onRemoveTransition = (index: number) => {
+    setDraft((prev) => removeTransition(prev, index));
+    setSelection(null);
   };
 
   const submit = () => {
@@ -128,182 +98,122 @@ export default function WorkflowBuilder() {
     <div className="min-h-full w-full bg-background pb-24">
       <PageHeader
         title="Workflow builder"
-        subtitle="Create a basic review flow"
+        subtitle="Drag states and connect them to design a review flow"
         back={{ href: '/', label: 'Back to workflows' }}
       />
 
-      <main className="mx-auto w-full max-w-2xl space-y-6 px-4 py-5">
-        <Alert data-testid="alert-builder-scope">
-          <Info className="size-4" />
-          <AlertTitle>What this builder does</AlertTitle>
-          <AlertDescription>
-            It creates a real workflow definition — states and transition commands — in
-            Sitecore. Editing or deleting existing workflows, reordering states, security on
-            commands, and workflow <em>actions</em> (auto-publish, emails) are not exposed by
-            the Authoring API, so manage those in the Content Editor.
-          </AlertDescription>
-        </Alert>
+      <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-5">
+        <BuilderTips />
 
-        <section className="space-y-2">
-          <Label htmlFor="wf-name">Workflow name</Label>
-          <Input
-            id="wf-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. New Brand Review"
-            data-testid="input-workflow-name"
-          />
-          {duplicateName && (
-            <p className="text-xs text-destructive">A workflow with this name already exists.</p>
-          )}
-        </section>
-
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-foreground">Live preview</h2>
-          <WorkflowCanvas
-            graph={draftGraph}
-            selectedStateId={selectedKey}
-            onSelectState={(key) => setSelectedKey((prev) => (prev === key ? null : key))}
-          />
-          <p className="text-xs text-muted-foreground">
-            The diagram updates as you edit below. Click a state to highlight its row.
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-56 flex-1 space-y-1.5">
+            <Label htmlFor="wf-name">Workflow name</Label>
+            <Input
+              id="wf-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. New Brand Review"
+              data-testid="input-workflow-name"
+            />
+          </div>
+          <Button variant="outline" onClick={onAddState} data-testid="button-add-state">
+            <Plus className="size-4" /> Add state
+          </Button>
+        </div>
+        {duplicateName && (
+          <p className="text-xs text-destructive" data-testid="text-duplicate-name">
+            A workflow with this name already exists.
           </p>
-        </section>
+        )}
 
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">States</h2>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                setStates((prev) => [
-                  ...prev,
-                  { key: nextKey(), name: '', initial: false, final: false },
-                ])
-              }
-              data-testid="button-add-state"
-            >
-              <Plus className="size-4" /> Add state
-            </Button>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="space-y-1.5">
+            <BuilderCanvas
+              draft={draft}
+              selection={selection}
+              onSelect={setSelection}
+              onMoveState={(key, to) => setDraft((prev) => moveState(prev, key, to))}
+              onConnect={onConnect}
+              onConnectRejected={(problem) => toast.error(problem)}
+              className="min-h-[340px]"
+            />
           </div>
-          <ul className="space-y-2">
-            {states.map((state) => (
-              <li
-                key={state.key}
-                className={`flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2.5 ${
-                  selectedKey === state.key ? 'border-primary ring-1 ring-primary' : 'border-border'
-                }`}
-              >
-                <Input
-                  value={state.name}
-                  onChange={(e) => updateState(state.key, { name: e.target.value })}
-                  placeholder="State name"
-                  className="h-8 w-40 flex-1"
-                  data-testid={`input-state-name-${state.key}`}
-                />
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <input
-                    type="radio"
-                    name="initial-state"
-                    checked={state.initial}
-                    onChange={() => updateState(state.key, { initial: true })}
-                    data-testid={`radio-initial-${state.key}`}
-                  />
-                  initial
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={state.final}
-                    onChange={(e) => updateState(state.key, { final: e.target.checked })}
-                    data-testid={`checkbox-final-${state.key}`}
-                  />
-                  final
-                </label>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8"
-                  onClick={() => removeState(state.key)}
-                  aria-label={`Remove state ${state.name || '(unnamed)'}`}
-                  data-testid={`button-remove-state-${state.key}`}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </section>
 
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Transitions</h2>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={states.length < 2}
-              onClick={() =>
-                setTransitions((prev) => [
-                  ...prev,
-                  { name: '', fromKey: states[0]!.key, toKey: states[1]!.key },
-                ])
-              }
-              data-testid="button-add-transition"
-            >
-              <Plus className="size-4" /> Add transition
-            </Button>
+          {/* Inspector */}
+          <aside
+            className="h-fit space-y-4 rounded-xl border border-border bg-card p-4"
+            aria-label="Selection inspector"
+            data-testid="builder-inspector"
+          >
+            {selectedState && selection?.kind === 'state' ? (
+              <StateInspector
+                draft={draft}
+                stateKey={selection.key}
+                onChange={(patch) => setDraft((prev) => updateState(prev, selection.key, patch))}
+                onConnectTo={(toKey) => onConnect(selection.key, toKey)}
+                onRemove={() => onRemoveState(selection.key)}
+              />
+            ) : selectedTransition && selection?.kind === 'transition' ? (
+              <TransitionInspector
+                draft={draft}
+                index={selection.index}
+                onChange={(patch) => setDraft((prev) => updateTransition(prev, selection.index, patch))}
+                onRemove={() => onRemoveTransition(selection.index)}
+              />
+            ) : (
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Nothing selected</p>
+                <p>
+                  Select a state or a transition on the canvas to rename it, change its flags,
+                  or remove it.
+                </p>
+              </div>
+            )}
+          </aside>
+        </div>
+
+        {/* Compact structured fallback for narrow screens / screen readers. */}
+        <details className="rounded-lg border border-border bg-card px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium text-foreground">
+            List view ({draft.states.length} states, {draft.transitions.length} transitions)
+          </summary>
+          <div className="space-y-3 pb-1 pt-3">
+            <ul className="space-y-1" data-testid="list-states">
+              {draft.states.map((s) => (
+                <li key={s.key} className="flex items-center gap-2 text-sm">
+                  <button
+                    type="button"
+                    className="truncate text-left text-foreground underline-offset-2 hover:underline"
+                    onClick={() => setSelection({ kind: 'state', key: s.key })}
+                    data-testid={`list-state-${s.key}`}
+                  >
+                    {s.name.trim() || '(unnamed)'}
+                  </button>
+                  {s.initial && <Badge colorScheme="primary" className="px-1.5 py-0 text-[9px]">initial</Badge>}
+                  {s.final && <Badge colorScheme="neutral" className="px-1.5 py-0 text-[9px]">final</Badge>}
+                </li>
+              ))}
+            </ul>
+            <ul className="space-y-1" data-testid="list-transitions">
+              {draft.transitions.map((t, i) => (
+                <li key={i} className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <button
+                    type="button"
+                    className="text-foreground underline-offset-2 hover:underline"
+                    onClick={() => setSelection({ kind: 'transition', index: i })}
+                    data-testid={`list-transition-${i}`}
+                  >
+                    {t.name.trim() || '(unnamed)'}
+                  </button>
+                  <span className="truncate">
+                    {stateLabel(draft, t.fromKey)} <ArrowRight className="inline size-3" />{' '}
+                    {stateLabel(draft, t.toKey)}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="space-y-2">
-            {transitions.map((t, i) => (
-              <li
-                key={i}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-2.5"
-              >
-                <Input
-                  value={t.name}
-                  onChange={(e) =>
-                    setTransitions((prev) =>
-                      prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)),
-                    )
-                  }
-                  placeholder="Command, e.g. Submit"
-                  className="h-8 w-32 flex-1"
-                  data-testid={`input-transition-name-${i}`}
-                />
-                <StateSelect
-                  value={t.fromKey}
-                  states={states}
-                  onChange={(fromKey) =>
-                    setTransitions((prev) =>
-                      prev.map((x, j) => (j === i ? { ...x, fromKey } : x)),
-                    )
-                  }
-                  testId={`select-from-${i}`}
-                />
-                <span className="text-xs text-muted-foreground">→</span>
-                <StateSelect
-                  value={t.toKey}
-                  states={states}
-                  onChange={(toKey) =>
-                    setTransitions((prev) => prev.map((x, j) => (j === i ? { ...x, toKey } : x)))
-                  }
-                  testId={`select-to-${i}`}
-                />
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8"
-                  onClick={() => setTransitions((prev) => prev.filter((_, j) => j !== i))}
-                  aria-label="Remove transition"
-                  data-testid={`button-remove-transition-${i}`}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </section>
+        </details>
 
         {problems.length > 0 && name.trim() !== '' && (
           <Alert variant="danger" data-testid="alert-builder-problems">
@@ -353,29 +263,163 @@ export default function WorkflowBuilder() {
   );
 }
 
-function StateSelect({
-  value,
-  states,
-  onChange,
-  testId,
-}: {
-  value: string;
-  states: DraftState[];
-  onChange: (key: string) => void;
-  testId: string;
-}) {
+function stateLabel(draft: BuilderDraft, key: string): string {
+  return draft.states.find((s) => s.key === key)?.name.trim() || '(unnamed)';
+}
+
+function BuilderTips() {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-      data-testid={testId}
+    <details
+      className="group rounded-lg border border-border bg-card"
+      data-testid="builder-tips"
     >
-      {states.map((s) => (
-        <option key={s.key} value={s.key}>
-          {s.name || '(unnamed)'}
-        </option>
-      ))}
-    </select>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+        <HelpCircle className="size-4 text-primary" />
+        <span>Tool tips</span>
+        <span className="ml-auto text-xs font-normal text-muted-foreground group-open:hidden">
+          Click to learn how the builder works
+        </span>
+        <span className="ml-auto hidden text-xs font-normal text-muted-foreground group-open:inline">
+          Click to hide
+        </span>
+      </summary>
+      <div className="grid gap-3 border-t border-border px-3 py-3 text-sm text-muted-foreground md:grid-cols-3">
+        <div>
+          <p className="mb-1 font-medium text-foreground">Build from a blank canvas</p>
+          <p>Add states as you need them, then set one as the initial state and any number as final states.</p>
+        </div>
+        <div>
+          <p className="mb-1 font-medium text-foreground">Connect the flow</p>
+          <p>Drag the ring on a state&apos;s right edge onto another state. Click a transition label to name its command.</p>
+        </div>
+        <div>
+          <p className="mb-1 font-medium text-foreground">What gets created</p>
+          <p>This creates a real Sitecore workflow with states and transition commands. Actions, command security, and editing existing workflows stay in native Sitecore tools.</p>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function StateInspector({
+  draft,
+  stateKey,
+  onChange,
+  onConnectTo,
+  onRemove,
+}: {
+  draft: BuilderDraft;
+  stateKey: string;
+  onChange: (patch: { name?: string; initial?: boolean; final?: boolean }) => void;
+  onConnectTo: (toKey: string) => void;
+  onRemove: () => void;
+}) {
+  const state = draft.states.find((s) => s.key === stateKey)!;
+  const others = draft.states.filter((s) => s.key !== stateKey);
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">State</p>
+      <div className="space-y-1.5">
+        <Label htmlFor="inspector-state-name">Name</Label>
+        <Input
+          id="inspector-state-name"
+          value={state.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="State name"
+          data-testid="input-inspector-state-name"
+        />
+      </div>
+      <div className="space-y-1.5 text-sm">
+        <label className="flex items-center gap-2 text-muted-foreground">
+          <input
+            type="radio"
+            name="initial-state"
+            checked={state.initial}
+            onChange={() => onChange({ initial: true })}
+            data-testid="radio-inspector-initial"
+          />
+          Initial state
+        </label>
+        <label className="flex items-center gap-2 text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={state.final}
+            onChange={(e) => onChange({ final: e.target.checked })}
+            data-testid="checkbox-inspector-final"
+          />
+          Final state
+        </label>
+      </div>
+      {others.length > 0 && (
+        <div className="space-y-1.5">
+          <Label htmlFor="inspector-connect-to">Add transition to…</Label>
+          <select
+            id="inspector-connect-to"
+            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+            value=""
+            onChange={(e) => e.target.value && onConnectTo(e.target.value)}
+            data-testid="select-inspector-connect"
+          >
+            <option value="">Choose a target state</option>
+            {others.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.name.trim() || '(unnamed)'}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <Button
+        variant="outline"
+        className="w-full text-destructive"
+        onClick={onRemove}
+        data-testid="button-inspector-remove-state"
+      >
+        <Trash2 className="size-4" /> Remove state
+      </Button>
+    </div>
+  );
+}
+
+function TransitionInspector({
+  draft,
+  index,
+  onChange,
+  onRemove,
+}: {
+  draft: BuilderDraft;
+  index: number;
+  onChange: (patch: { name?: string }) => void;
+  onRemove: () => void;
+}) {
+  const t = draft.transitions[index]!;
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Transition
+      </p>
+      <p className="text-sm text-muted-foreground">
+        {stateLabel(draft, t.fromKey)} <ArrowRight className="inline size-3" />{' '}
+        {stateLabel(draft, t.toKey)}
+      </p>
+      <div className="space-y-1.5">
+        <Label htmlFor="inspector-transition-name">Command name</Label>
+        <Input
+          id="inspector-transition-name"
+          value={t.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="e.g. Submit"
+          data-testid="input-inspector-transition-name"
+        />
+      </div>
+      <Button
+        variant="outline"
+        className="w-full text-destructive"
+        onClick={onRemove}
+        data-testid="button-inspector-remove-transition"
+      >
+        <Trash2 className="size-4" /> Remove transition
+      </Button>
+    </div>
   );
 }
