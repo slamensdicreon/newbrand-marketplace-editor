@@ -1,4 +1,9 @@
-import type { EditorUser, MarketplaceHost } from './host';
+import type {
+  EditorUser,
+  ItemWorkflowStatus,
+  MarketplaceHost,
+  PageContextInfo,
+} from './host';
 import {
   classifyTemplate,
   normalizeId,
@@ -424,8 +429,142 @@ export class MockMarketplaceHost implements MarketplaceHost {
     return results;
   }
 
+  /* ---------------- Page builder companion (demo) ---------------- */
+
+  private pageListeners = new Set<(page: PageContextInfo | null) => void>();
+  private updateListeners = new Set<() => void>();
+  private demoPageIndex = 0;
+  private destroyed = false;
+
+  /**
+   * Demo pages simulate what the Page builder would report. They point at
+   * real demo fixtures (queue items and content-tree pages) so the panel
+   * exercises the same read/guard/write paths as live mode.
+   */
+  listDemoPages(): PageContextInfo[] {
+    const pages: PageContextInfo[] = [];
+    for (const name of ['Privacy Update', 'Spring Campaign Landing']) {
+      for (const items of this.queueItems.values()) {
+        const found = items.find((i) => i.item.name === name);
+        if (found) {
+          pages.push({
+            itemId: found.item.itemId,
+            name: found.item.name,
+            path: found.item.path,
+            language: found.item.language,
+            version: found.item.version,
+            route: null,
+          });
+          break;
+        }
+      }
+    }
+    const home = this.findContentNode(CT_HOME);
+    if (home) {
+      pages.push({
+        itemId: home.item.itemId,
+        name: home.item.name,
+        path: home.item.path,
+        language: home.item.language,
+        version: home.item.version,
+        route: '/',
+      });
+    }
+    return pages;
+  }
+
+  /** Demo-only: simulate the editor navigating to another page. */
+  navigateDemoPage(index: number): void {
+    const pages = this.listDemoPages();
+    if (pages.length === 0) return;
+    this.demoPageIndex = ((index % pages.length) + pages.length) % pages.length;
+    const page = pages[this.demoPageIndex] ?? null;
+    for (const listener of this.pageListeners) listener(page);
+  }
+
+  /** Demo/test-only: fire a content-updated event. */
+  emitContentUpdate(): void {
+    for (const listener of this.updateListeners) listener();
+  }
+
+  get currentDemoPageIndex(): number {
+    return this.demoPageIndex;
+  }
+
+  subscribePageContext(listener: (page: PageContextInfo | null) => void): () => void {
+    this.pageListeners.add(listener);
+    // Emit the current demo page asynchronously, mirroring the live host's
+    // handshake latency.
+    void delay(this.latencyMs).then(() => {
+      if (this.destroyed || !this.pageListeners.has(listener)) return;
+      listener(this.listDemoPages()[this.demoPageIndex] ?? null);
+    });
+    return () => {
+      this.pageListeners.delete(listener);
+    };
+  }
+
+  subscribeContentUpdates(listener: () => void): () => void {
+    this.updateListeners.add(listener);
+    return () => {
+      this.updateListeners.delete(listener);
+    };
+  }
+
+  async getItemWorkflowStatus(
+    itemId: string,
+    _language: string,
+  ): Promise<ItemWorkflowStatus | null> {
+    await delay(this.latencyMs);
+    const id = normalizeId(itemId);
+    // Queue fixtures are authoritative for items sitting in a workflow.
+    for (const [key, items] of this.queueItems) {
+      const entry = items.find((i) => i.item.itemId === id);
+      if (!entry) continue;
+      const [workflowId, stateId] = splitQueueKey(key);
+      const wf = this.workflows.find((w) => w.workflowId === workflowId);
+      const state = wf?.states.find((s) => s.stateId === stateId);
+      if (!wf || !state) return null;
+      return {
+        itemId: id,
+        name: entry.item.name,
+        path: entry.item.path,
+        language: entry.item.language,
+        version: entry.item.version,
+        updatedAt: entry.item.updatedAt,
+        workflow: { workflowId: wf.workflowId, displayName: wf.displayName },
+        state: { stateId: state.stateId, displayName: state.displayName, final: state.final },
+      };
+    }
+    // Content-tree items may carry workflow metadata without a queue entry
+    // (e.g. final states in the demo tree).
+    const node = this.findContentNode(id);
+    if (!node) return null;
+    const decorated = this.decorateWorkflow({ ...node.item });
+    const wf = decorated.workflow
+      ? this.workflows.find((w) => w.workflowId === decorated.workflow!.workflowId)
+      : undefined;
+    const state = wf?.states.find((s) => s.stateId === decorated.workflowState?.stateId);
+    return {
+      itemId: id,
+      name: decorated.name,
+      path: decorated.path,
+      language: decorated.language,
+      version: decorated.version,
+      updatedAt: null,
+      workflow: decorated.workflow,
+      state: state
+        ? { stateId: state.stateId, displayName: state.displayName, final: state.final }
+        : decorated.workflowState
+          ? { ...decorated.workflowState, final: false }
+          : null,
+    };
+  }
+
   destroy(): void {
-    // Nothing to release.
+    this.destroyed = true;
+    this.pageListeners.clear();
+    this.updateListeners.clear();
   }
 }
 

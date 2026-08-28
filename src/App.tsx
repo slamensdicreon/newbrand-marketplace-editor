@@ -10,6 +10,7 @@ import WorkflowQueue from '@/pages/workflow-queue';
 import WorkflowDetail from '@/pages/workflow-detail';
 import WorkflowBuilder from '@/pages/workflow-builder';
 import ApplyWorkflow from '@/pages/apply-workflow';
+import PagePanel from '@/pages/page-panel';
 import { MarketplaceProvider, useHostKey } from '@/lib/marketplace/provider';
 import { ModeIndicator } from '@/components/mode-indicator';
 import { WorkspaceShell } from '@/components/workspace-shell';
@@ -51,9 +52,20 @@ function HostScopedRoutes() {
   const hostKey = useHostKey();
   return (
     <WouterRouter key={hostKey} base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-      <WorkspaceShell>
-        <Router />
-      </WorkspaceShell>
+      <Switch>
+        {/* Compact Page builder context-panel view: no workspace shell,
+            sized for the SitecoreAI side panel. */}
+        <Route path="/panel">
+          <RoutedErrorBoundary>
+            <PagePanel />
+          </RoutedErrorBoundary>
+        </Route>
+        <Route>
+          <WorkspaceShell>
+            <Router />
+          </WorkspaceShell>
+        </Route>
+      </Switch>
     </WouterRouter>
   );
 }

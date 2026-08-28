@@ -55,6 +55,9 @@ function liveHostStub(): MarketplaceHost & { destroyed: boolean } {
     getContentChildren: async () => [],
     getContentItems: async () => [],
     assignWorkflow: async () => [],
+    subscribePageContext: () => () => undefined,
+    subscribeContentUpdates: () => () => undefined,
+    getItemWorkflowStatus: async () => null,
     destroy() {
       this.destroyed = true;
     },

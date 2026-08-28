@@ -20,7 +20,12 @@ import {
   resolveAssignmentTargets,
   validateSelection,
 } from '@/lib/workflow/types';
-import { isEmbedded, type MarketplaceHost } from './host';
+import {
+  isEmbedded,
+  type ItemWorkflowStatus,
+  type MarketplaceHost,
+  type PageContextInfo,
+} from './host';
 import { MockMarketplaceHost } from './mock-host';
 import { SdkMarketplaceHost } from './sdk-host';
 
@@ -65,6 +70,19 @@ interface MarketplaceContextValue {
 
 const MarketplaceContext = createContext<MarketplaceContextValue | null>(null);
 
+/**
+ * Mutable module-level mirror of the CURRENT host generation. Unlike
+ * `useHostKey()` (a render-time snapshot), this is readable from inside a
+ * long-running async mutation, so a guarded write can verify — immediately
+ * before the write — that no host swap happened while it awaited. It is
+ * updated synchronously at every generation change, including provider
+ * teardown.
+ */
+let activeHostKey = 'none:0';
+export function getActiveHostKey(): string {
+  return activeHostKey;
+}
+
 /** True when a real Marketplace handshake should be attempted. */
 function shouldAttemptLive(): boolean {
   const params = new URLSearchParams(window.location.search);
@@ -83,7 +101,8 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const nextKey = (mode: 'demo' | 'live'): string => {
       generationRef.current += 1;
-      return `${mode}:${generationRef.current}`;
+      activeHostKey = `${mode}:${generationRef.current}`;
+      return activeHostKey;
     };
     // Demo data renders immediately in every case; the handshake (when
     // applicable) runs in parallel and swaps the host in when verified.
@@ -124,6 +143,10 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
       });
     return () => {
       cancelled = true;
+      // Invalidate the generation token so any still-running guarded
+      // mutation from this generation refuses to write.
+      generationRef.current += 1;
+      activeHostKey = `none:${generationRef.current}`;
       hostRef.current?.destroy();
       hostRef.current = null;
     };
@@ -172,6 +195,70 @@ export function useEditorUser() {
     staleTime: Infinity,
   });
 }
+
+/* ---------------- Page builder companion hooks ---------------- */
+
+export interface PageContextState {
+  /** Page currently open in the Page builder; null when none/unknown. */
+  page: PageContextInfo | null;
+  /** False until the host has reported at least once. */
+  ready: boolean;
+}
+
+/**
+ * Live view of the page open in the Page builder. Resubscribes on every
+ * host swap and never lets a previous generation's page leak through: the
+ * state carries the hostKey it was produced under and is discarded when it
+ * no longer matches.
+ */
+export function usePageContext(): PageContextState {
+  const host = useHost();
+  const hostKey = useHostKey();
+  const [state, setState] = useState<{ key: string } & PageContextState>({
+    key: hostKey,
+    page: null,
+    ready: false,
+  });
+  useEffect(() => {
+    setState({ key: hostKey, page: null, ready: false });
+    const unsubscribe = host.subscribePageContext((page) => {
+      setState({ key: hostKey, page, ready: true });
+    });
+    return unsubscribe;
+  }, [host, hostKey]);
+  return state.key === hostKey ? state : { page: null, ready: false };
+}
+
+/**
+ * Refresh callback wiring for Page builder content-change events
+ * (fields/layout saved). Invalidates the given item's workflow status so
+ * the panel never shows pre-save data.
+ */
+export function usePageContentUpdates(itemId: string | undefined) {
+  const host = useHost();
+  const hostKey = useHostKey();
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!itemId) return;
+    return host.subscribeContentUpdates(() => {
+      void queryClient.invalidateQueries({ queryKey: ['item-workflow-status', itemId] });
+      void queryClient.invalidateQueries({ queryKey: ['workflow-history'] });
+    });
+  }, [host, hostKey, itemId, queryClient]);
+}
+
+/** Fresh workflow placement of one item. */
+export function useItemWorkflowStatus(itemId: string | undefined, language: string | undefined) {
+  const host = useHost();
+  const hostKey = useHostKey();
+  return useQuery({
+    queryKey: ['item-workflow-status', itemId, language, hostKey],
+    queryFn: () => host!.getItemWorkflowStatus(itemId!, language!),
+    enabled: !!host && !!itemId && !!language,
+  });
+}
+
+export type { ItemWorkflowStatus, PageContextInfo };
 
 /* ---------------- Workflow hooks ---------------- */
 

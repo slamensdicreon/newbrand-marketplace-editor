@@ -24,7 +24,9 @@ import {
   isEmbedded,
   resolveAllowedHostOrigin,
   type EditorUser,
+  type ItemWorkflowStatus,
   type MarketplaceHost,
+  type PageContextInfo,
 } from './host';
 
 const HANDSHAKE_TIMEOUT_MS = 8000;
@@ -53,6 +55,35 @@ function handshakeFailureMessage(error: unknown): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Extract this app's page identity from a Marketplace `pages.context`
+ * payload. Returns null when no usable page identity is present.
+ */
+export function pageContextFrom(data: unknown): PageContextInfo | null {
+  const ctx = data as {
+    pageInfo?: {
+      id?: string;
+      name?: string;
+      displayName?: string;
+      path?: string;
+      language?: string;
+      version?: number;
+      route?: string;
+    } | null;
+    siteInfo?: { language?: string } | null;
+  } | null;
+  const page = ctx?.pageInfo;
+  if (!page?.id) return null;
+  return {
+    itemId: normalizeId(page.id),
+    name: page.displayName || page.name || 'Untitled page',
+    path: page.path ?? '',
+    language: page.language || ctx?.siteInfo?.language || LANGUAGE,
+    version: typeof page.version === 'number' ? page.version : null,
+    route: page.route ?? null,
+  };
 }
 
 interface GraphQLEnvelope {
@@ -396,6 +427,103 @@ export class SdkMarketplaceHost implements MarketplaceHost {
       error: payload.error ?? null,
       message: payload.message ?? null,
       nextStateId: payload.nextStateId ? normalizeId(payload.nextStateId) : null,
+    };
+  }
+
+  /* ---------------- Page builder companion ---------------- */
+
+  subscribePageContext(listener: (page: PageContextInfo | null) => void): () => void {
+    let stopped = false;
+    let unsubscribe: (() => void) | undefined;
+    const emit = (data: unknown) => {
+      if (!stopped) listener(pageContextFrom(data));
+    };
+    void this.client
+      .query('pages.context', {
+        subscribe: true,
+        onSuccess: emit,
+        onError: () => {
+          if (!stopped) listener(null);
+        },
+      })
+      .then((result) => {
+        if (stopped) {
+          result.unsubscribe?.();
+          return;
+        }
+        unsubscribe = result.unsubscribe;
+        if (result.data !== undefined) emit(result.data);
+      })
+      .catch(() => {
+        if (!stopped) listener(null);
+      });
+    return () => {
+      stopped = true;
+      unsubscribe?.();
+    };
+  }
+
+  subscribeContentUpdates(listener: () => void): () => void {
+    const unsubs = [
+      this.client.subscribe('pages.content.fieldsUpdated', { onData: () => listener() }),
+      this.client.subscribe('pages.content.layoutUpdated', { onData: () => listener() }),
+    ];
+    return () => {
+      for (const unsub of unsubs) unsub();
+    };
+  }
+
+  async getItemWorkflowStatus(
+    itemId: string,
+    language: string,
+  ): Promise<ItemWorkflowStatus | null> {
+    const data = await this.graphql(
+      `query ItemWorkflowStatus($itemId: ID!, $language: String!) {
+        item(where: { itemId: $itemId, language: $language }) {
+          itemId
+          name
+          path
+          version
+          language { name }
+          updated: field(name: "__Updated") { value }
+          workflow {
+            workflow { workflowId displayName }
+            workflowState { stateId displayName final }
+          }
+        }
+      }`,
+      { itemId, language },
+    );
+    const item = data['item'] as {
+      itemId: string;
+      name: string;
+      path: string;
+      version: number | null;
+      language?: { name?: string } | null;
+      updated?: { value?: string } | null;
+      workflow?: {
+        workflow?: { workflowId: string; displayName: string } | null;
+        workflowState?: { stateId: string; displayName: string; final: boolean | null } | null;
+      } | null;
+    } | null;
+    if (!item) return null;
+    const wf = item.workflow?.workflow;
+    const state = item.workflow?.workflowState;
+    return {
+      itemId: normalizeId(item.itemId),
+      name: item.name,
+      path: item.path,
+      language: item.language?.name ?? language,
+      version: item.version ?? null,
+      updatedAt: parseSitecoreDate(item.updated?.value),
+      workflow: wf ? { workflowId: normalizeId(wf.workflowId), displayName: wf.displayName } : null,
+      state: state
+        ? {
+            stateId: normalizeId(state.stateId),
+            displayName: state.displayName,
+            final: state.final === true,
+          }
+        : null,
     };
   }
 

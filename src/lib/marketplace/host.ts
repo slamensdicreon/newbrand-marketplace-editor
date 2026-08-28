@@ -19,6 +19,35 @@ export interface EditorUser {
 }
 
 /**
+ * The page currently open in the SitecoreAI Page builder, as reported by
+ * the Marketplace `pages.context` query. Only the identity fields this app
+ * needs are kept.
+ */
+export interface PageContextInfo {
+  itemId: string;
+  name: string;
+  path: string;
+  language: string;
+  version: number | null;
+  /** Site-relative route of the page, when the host reports one. */
+  route: string | null;
+}
+
+/** Fresh workflow placement of one item, straight from the host. */
+export interface ItemWorkflowStatus {
+  itemId: string;
+  name: string;
+  path: string;
+  language: string;
+  version: number | null;
+  updatedAt: string | null;
+  /** Workflow governing the item, or null when it has none. */
+  workflow: { workflowId: string; displayName: string } | null;
+  /** Current state within that workflow, or null when it has none. */
+  state: { stateId: string; displayName: string; final: boolean } | null;
+}
+
+/**
  * Abstraction over the surface this app needs from its host:
  * - who the signed-in editor is,
  * - reading and operating Sitecore workflows,
@@ -48,6 +77,28 @@ export interface MarketplaceHost {
   getItemHistory(workflowId: string, itemId: string, language: string): Promise<WorkflowHistoryEvent[]>;
   /** Execute a workflow command against one item version. */
   executeCommand(args: ExecuteCommandArgs): Promise<CommandResult>;
+
+  /* ---- Page builder companion (context panel) ---- */
+
+  /**
+   * Subscribe to the page currently open in the Page builder. The listener
+   * fires with the current page immediately (once known) and again on every
+   * navigation; `null` means no page context is available. Returns an
+   * unsubscribe function. Demo hosts emit demo pages; the live host uses the
+   * Marketplace `pages.context` subscription.
+   */
+  subscribePageContext(listener: (page: PageContextInfo | null) => void): () => void;
+  /**
+   * Subscribe to Page builder content-change events (fields/layout saved)
+   * for whatever page is open. Used only to refresh read models — never to
+   * infer identity. Returns an unsubscribe function.
+   */
+  subscribeContentUpdates(listener: () => void): () => void;
+  /**
+   * Fresh workflow placement of one item (or null when the item cannot be
+   * read). Called immediately before any command run from the page panel.
+   */
+  getItemWorkflowStatus(itemId: string, language: string): Promise<ItemWorkflowStatus | null>;
   /**
    * Create a new draft workflow definition (workflow, states, transition
    * commands) under /sitecore/system/Workflows. Returns the new workflow id.
