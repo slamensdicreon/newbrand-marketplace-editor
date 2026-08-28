@@ -1,9 +1,4 @@
-import {
-  SECTION_DEFINITIONS,
-  type SectionDefinition,
-  type SectionValues,
-} from '@/lib/home-content';
-import type { EditorUser, MarketplaceHost, SiteSummary } from './host';
+import type { EditorUser, MarketplaceHost } from './host';
 import {
   classifyTemplate,
   normalizeId,
@@ -27,90 +22,9 @@ import {
 /**
  * Demo host for local preview. The Replit preview does not run inside
  * SitecoreAI, so there is no Marketplace handshake available; this host
- * serves a faithful in-memory copy of the real New Brand homepage content
- * and applies saves to that copy only. The UI shows a persistent "Demo
- * mode" indicator whenever this host is active.
+ * serves faithful in-memory workflow and content-browser fixtures. The UI
+ * shows a persistent "Demo mode" indicator whenever this host is active.
  */
-
-const SEED: Record<string, SectionValues> = {
-  'hero-build': {
-    eyebrow: 'READY TO BUILD',
-    headlineLine1: 'LUMBER ON THE',
-    headlineLine2: 'GROUND',
-    description: 'Your crew frames it. Lowest cost per foot.',
-  },
-  'hero-assemble': {
-    eyebrow: 'READY TO ASSEMBLE',
-    headlineLine1: 'CUT TO YOUR',
-    headlineLine2: 'PLANS',
-    description: 'Precut packages arrive labeled in build order.',
-  },
-  'hero-raise': {
-    eyebrow: 'READY TO RAISE',
-    headlineLine1: 'BUILT BEFORE',
-    headlineLine2: 'IT SHIPS',
-    description: 'Trusses and panels come off our line, not your lot.',
-  },
-  'search-dock': {
-    placeholderText: 'SEARCH THE FULL CATALOG — TRUSSES, WINDOWS, TURN-KEY FRAMING...',
-    emptyMessage: 'NO MATCHES — TRY "TRUSSES", "WINDOWS", OR "FRAMING"',
-    locationName: 'ROCKWALL, TX',
-    locationMeta: '— 22 MI',
-    locationHours: 'OPEN UNTIL 5:00 PM',
-  },
-  capabilities: {
-    eyebrow: 'WHAT ARRIVES BUILT',
-    title: 'READY MEANS BUILT BEFORE IT SHIPS',
-    description:
-      'Hours move off your site, into our plant. Your local yard decides what arrives built.',
-    ctaLabel: 'SEE HOW READY YOURS CAN ARRIVE',
-    ctaHref: '#ready-plan',
-    bandEyebrow: 'INSIDE THE PLANT',
-    bandTitle: "THE HOURS YOU DON'T SPEND FRAMING START HERE.",
-    bandDescription:
-      'Trusses, panels, and precut packages come off this line, built to your plans.',
-  },
-  catalog: {
-    eyebrow: 'THE FULL CATALOG',
-    title: 'EVERYTHING ELSE? ALSO READY.',
-    description:
-      'One subdivision or one remodel. Foundation to finish, you pull it from one catalog.',
-    ctaLabel: 'FIND YOUR LOCATION',
-    ctaHref: '#catalog-search',
-    supportText: 'SUPPORTED BY 565+ LOCATIONS NATIONWIDE',
-  },
-  greener: {
-    eyebrow: 'A GREENER WAY TO BUILD',
-    title: 'PLANT PRECISION IS WHY LESS FOREST ENDS UP IN YOUR DUMPSTER.',
-    description:
-      "Optimized cutting in the plant means less waste in your dumpster — and the trees you don't burn through stay standing.",
-    linkLabel: 'SEE HOW MUCH YOURS COULD SAVE →',
-    linkHref: '#ready-plan',
-  },
-  quote: {
-    eyebrow: 'YOUR QUOTE',
-    title: 'SO — HOW READY SHOULD YOURS ARRIVE?',
-    description:
-      'Upload your plans. We take off the materials, quote the package, and show you what your plant can build before it ships.',
-    ctaLabel: 'TELL US HOW READY',
-    ctaHref: '#catalog-search',
-    noteLine1: 'PLANS IN — QUOTE OUT',
-    noteLine2: 'NO SITE VISIT REQUIRED',
-  },
-  'know-how': {
-    eyebrow: 'WHY IT HOLDS UP',
-    title: "READY ISN'T LUCK. IT'S ENGINEERED.",
-    sideText: "We don't just ship material. We engineer your path from slab to roof.",
-    ctaLabel: 'SEE THE BUILD SCIENCE',
-    ctaHref: '#inside-the-plant',
-  },
-  services: {
-    heading: 'WANT IT EVEN READIER?',
-    note: 'Every service starts the same way — with your plans.',
-    linkLabel: 'START WITH A READY QUOTE →',
-    linkHref: '#ready-plan',
-  },
-};
 
 const LATENCY_MS = 350;
 
@@ -120,53 +34,15 @@ function delay(ms: number): Promise<void> {
 
 export class MockMarketplaceHost implements MarketplaceHost {
   readonly mode = 'demo' as const;
-  private store: Record<string, SectionValues>;
   private latencyMs: number;
 
   constructor(options?: { latencyMs?: number }) {
     this.latencyMs = options?.latencyMs ?? LATENCY_MS;
-    // Deep-copy the seed so saves never mutate module state across instances.
-    this.store = Object.fromEntries(
-      SECTION_DEFINITIONS.map((s) => [s.id, { ...(SEED[s.id] ?? {}) }]),
-    );
   }
 
   async getUser(): Promise<EditorUser> {
     await delay(this.latencyMs);
     return { name: 'Demo Editor', email: 'demo.editor@example.com' };
-  }
-
-  async getSite(): Promise<SiteSummary> {
-    await delay(this.latencyMs);
-    return {
-      siteName: 'New Brand',
-      homePath: '/sitecore/content/brands/new-brand/Home',
-      environment: 'Demo (no Sitecore connection)',
-    };
-  }
-
-  async loadSection(section: SectionDefinition): Promise<SectionValues> {
-    await delay(this.latencyMs);
-    const values = this.store[section.id];
-    if (!values) {
-      throw new Error(`Unknown section: ${section.id}`);
-    }
-    return { ...values };
-  }
-
-  async saveSection(section: SectionDefinition, changed: SectionValues): Promise<void> {
-    await delay(this.latencyMs);
-    const values = this.store[section.id];
-    if (!values) {
-      throw new Error(`Unknown section: ${section.id}`);
-    }
-    const allowed = new Set(section.fields.map((f) => f.key));
-    for (const key of Object.keys(changed)) {
-      if (!allowed.has(key)) {
-        throw new Error(`Field "${key}" is not editable on section "${section.id}".`);
-      }
-    }
-    Object.assign(values, changed);
   }
 
   /* ---------------- Workflow operations (demo data) ---------------- */

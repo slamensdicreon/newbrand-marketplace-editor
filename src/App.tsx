@@ -4,8 +4,6 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import Dashboard from '@/pages/dashboard';
-import SectionEditor from '@/pages/section-editor';
 import Workflows from '@/pages/workflows';
 import WorkflowQueue from '@/pages/workflow-queue';
 import WorkflowDetail from '@/pages/workflow-detail';
@@ -34,8 +32,6 @@ function Router() {
         <Route path="/workflows/:workflowId/apply" component={ApplyWorkflow} />
         <Route path="/workflows/:workflowId" component={WorkflowDetail} />
         <Route path="/builder" component={WorkflowBuilder} />
-        <Route path="/content" component={Dashboard} />
-        <Route path="/sections/:id" component={SectionEditor} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
@@ -45,10 +41,9 @@ function Router() {
 /**
  * Remount the ENTIRE routed tree whenever the host generation changes (demo →
  * live handoff, or a retry creating a fresh demo host). This drops all local
- * component state — section editor values, workflow-builder drafts, queue
- * selections, confirmation dialogs — so nothing composed against one host can
- * be submitted through another. Query caches are isolated separately via
- * hostKey-scoped query keys.
+ * component state — workflow-builder drafts, queue selections, confirmation
+ * dialogs — so nothing composed against one host can be submitted through
+ * another. Query caches are isolated separately via hostKey-scoped query keys.
  */
 function HostScopedRoutes() {
   const hostKey = useHostKey();

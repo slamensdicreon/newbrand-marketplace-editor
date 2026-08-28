@@ -9,12 +9,6 @@ import {
   type ReactNode,
 } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  getSection,
-  validateSection,
-  type SectionDefinition,
-  type SectionValues,
-} from '@/lib/home-content';
 import type {
   AssignmentResult,
   ContentItem,
@@ -26,7 +20,6 @@ import {
   resolveAssignmentTargets,
   validateSelection,
 } from '@/lib/workflow/types';
-import { clearAllDrafts } from '@/lib/draft-store';
 import { isEmbedded, type MarketplaceHost } from './host';
 import { MockMarketplaceHost } from './mock-host';
 import { SdkMarketplaceHost } from './sdk-host';
@@ -37,7 +30,7 @@ import { SdkMarketplaceHost } from './sdk-host';
  * - `connecting` — demo data is showing while the trusted Marketplace
  *   handshake runs in parallel.
  * - `live` — the handshake and API-resource verification succeeded; the
- *   demo host was destroyed, caches and demo drafts were dropped, and all
+ *   demo host was destroyed, caches were dropped, and all
  *   traffic goes through the verified Sitecore host.
  * - `demo` — demo data only, either because the app runs standalone
  *   (Replit preview, local dev, `?host=demo`) or because the Sitecore
@@ -114,11 +107,10 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
           return;
         }
         // Atomic handoff: demo host is destroyed and every demo-era cache
-        // and local draft is dropped BEFORE the live host is exposed, so
+        // is dropped BEFORE the live host is exposed, so
         // demo data can never leak into live reads or writes.
         demo.destroy();
         hostRef.current = live;
-        clearAllDrafts();
         queryClient.clear();
         setHostKey(nextKey('live'));
         setStatus({ state: 'live', host: live });
@@ -178,28 +170,6 @@ export function useEditorUser() {
     queryFn: () => host!.getUser(),
     enabled: !!host,
     staleTime: Infinity,
-  });
-}
-
-export function useSiteSummary() {
-  const host = useHost();
-  const hostKey = useHostKey();
-  return useQuery({
-    queryKey: ['site', hostKey],
-    queryFn: () => host!.getSite(),
-    enabled: !!host,
-    staleTime: Infinity,
-  });
-}
-
-export function useSectionContent(sectionId: string) {
-  const host = useHost();
-  const hostKey = useHostKey();
-  const section = getSection(sectionId);
-  return useQuery({
-    queryKey: ['section', sectionId, hostKey],
-    queryFn: () => host!.loadSection(section!),
-    enabled: !!host && !!section,
   });
 }
 
@@ -424,36 +394,6 @@ export function useCreateWorkflow() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['workflows'] });
-    },
-  });
-}
-
-/**
- * Save changed fields for a section. Validates before sending; on success
- * the section cache is updated in place so the UI reflects the new values
- * without a refetch.
- */
-export function useSaveSection(section: SectionDefinition | undefined) {
-  const host = useHost();
-  const hostKey = useHostKey();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (changed: SectionValues) => {
-      if (!host || !section) throw new Error('Not connected.');
-      const current =
-        queryClient.getQueryData<SectionValues>(['section', section.id, hostKey]) ?? {};
-      const next = { ...current, ...changed };
-      const errors = validateSection(section, next);
-      if (errors.length > 0) {
-        throw new Error(errors.map((e) => e.message).join(' '));
-      }
-      await host.saveSection(section, changed);
-      return next;
-    },
-    onSuccess: (next) => {
-      if (host && section) {
-        queryClient.setQueryData(['section', section.id, hostKey], next);
-      }
     },
   });
 }

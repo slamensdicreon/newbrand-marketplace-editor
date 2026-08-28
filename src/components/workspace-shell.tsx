@@ -3,7 +3,6 @@ import { Link, useLocation, useRoute } from 'wouter';
 import {
   CloudOff,
   ChevronRight,
-  FileText,
   GitBranch,
   LayoutDashboard,
   Loader2,
@@ -44,7 +43,6 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <nav className="ml-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           <TopLink href="/" label="Overview" />
           <TopLink href="/builder" label="Builder" />
-          <TopLink href="/content" label="Content" />
         </nav>
         <Button
           size="sm"
@@ -164,15 +162,6 @@ function NavRail() {
             ))
           )}
           <NavItem href="/builder" icon={PencilRuler} label="Builder" exact />
-        </NavSection>
-
-        <NavSection label="Content">
-          <NavItem
-            href="/content"
-            icon={FileText}
-            label="Homepage editor"
-            active={location.startsWith('/content') || location.startsWith('/sections')}
-          />
         </NavSection>
       </nav>
 

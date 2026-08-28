@@ -117,33 +117,14 @@ describe('SdkMarketplaceHost.connect', () => {
     const mutate = vi.fn().mockResolvedValue({
       data: {
         data: {
-          item: {
-            fields: {
-              nodes: [{ name: 'eyebrow', value: 'READY TO BUILD' }],
-            },
-          },
+          workflows: { nodes: [] },
         },
       },
     });
     initMock.mockResolvedValue(connectedClient({ mutate }));
     const host = await SdkMarketplaceHost.connect();
 
-    await host.loadSection({
-      id: 'hero-build',
-      itemId: '{ITEM-ID}',
-      title: 'Hero — Ready to Build',
-      blurb: 'First panel',
-      group: 'Hero',
-      itemPath: '/sitecore/content/brands/new-brand/Data/Home Hero/Ready to Build',
-      fields: [
-        {
-          key: 'eyebrow',
-          label: 'Eyebrow',
-          kind: 'text',
-          maxLength: 40,
-        },
-      ],
-    });
+    await host.listWorkflows();
 
     expect(mutate).toHaveBeenCalledWith(
       'xmc.authoring.graphql',

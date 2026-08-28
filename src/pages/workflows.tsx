@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'wouter';
 import { useQueries } from '@tanstack/react-query';
-import { AlertCircle, ArrowRight, GitBranch, Hammer, PencilRuler, Settings2 } from 'lucide-react';
+import { AlertCircle, ArrowRight, GitBranch, PencilRuler, Settings2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -224,18 +224,6 @@ export default function Workflows() {
             </ul>
           </section>
         )}
-
-        <div className="mt-8 border-t border-border pt-4">
-          <Link
-            href="/content"
-            className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
-            data-testid="link-home-editor"
-          >
-            <Hammer className="size-4" />
-            Homepage content editor
-            <ArrowRight className="size-3.5" />
-          </Link>
-        </div>
       </main>
     </div>
   );

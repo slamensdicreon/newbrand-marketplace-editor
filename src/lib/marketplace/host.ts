@@ -1,4 +1,3 @@
-import type { SectionDefinition, SectionValues } from '@/lib/home-content';
 import type {
   AssignmentResult,
   CommandResult,
@@ -19,17 +18,11 @@ export interface EditorUser {
   email?: string;
 }
 
-export interface SiteSummary {
-  siteName: string;
-  homePath: string;
-  environment: string;
-}
-
 /**
  * Abstraction over the surface this app needs from its host:
  * - who the signed-in editor is,
- * - reading the homepage datasource content,
- * - writing changed fields back.
+ * - reading and operating Sitecore workflows,
+ * - browsing content and assigning workflows.
  *
  * Two implementations exist:
  * - `SdkMarketplaceHost` — real, host-mediated calls through the Sitecore
@@ -40,11 +33,6 @@ export interface SiteSummary {
 export interface MarketplaceHost {
   readonly mode: 'live' | 'demo';
   getUser(): Promise<EditorUser>;
-  getSite(): Promise<SiteSummary>;
-  /** Load current field values for one section's datasource item. */
-  loadSection(section: SectionDefinition): Promise<SectionValues>;
-  /** Persist changed fields for one section's datasource item. */
-  saveSection(section: SectionDefinition, changed: SectionValues): Promise<void>;
 
   /* ---- Workflow operations (command center + starter builder) ---- */
 

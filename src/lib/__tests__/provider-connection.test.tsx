@@ -3,12 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { MarketplaceHost } from '@/lib/marketplace/host';
-import { saveDraft, loadDraft } from '@/lib/draft-store';
 
 /**
  * Connection lifecycle tests: the app must render demo data immediately,
  * swap atomically to the live host on a successful handshake (dropping demo
- * caches and drafts), and stay in labeled demo mode with retry on failure.
+ * caches), and stay in labeled demo mode with retry on failure.
  */
 
 // Controllable embedding: standalone by default, embedded per-test.
@@ -29,7 +28,6 @@ vi.mock('@/lib/marketplace/sdk-host', () => ({
 import { Route, Router } from 'wouter';
 import { memoryLocation } from 'wouter/memory-location';
 import { MarketplaceProvider, useMarketplace } from '@/lib/marketplace/provider';
-import SectionEditor from '@/pages/section-editor';
 import WorkflowBuilder from '@/pages/workflow-builder';
 
 function liveHostStub(): MarketplaceHost & { destroyed: boolean } {
@@ -37,9 +35,6 @@ function liveHostStub(): MarketplaceHost & { destroyed: boolean } {
     mode: 'live',
     destroyed: false,
     getUser: async () => ({ name: 'Live Editor' }),
-    getSite: async () => ({ siteName: 'New Brand', homePath: '/', environment: 'live' }),
-    loadSection: async () => ({}),
-    saveSection: async () => undefined,
     listWorkflows: async () => [],
     getStateCounts: async () => ({}),
     getQueue: async () => ({ items: [], hasNextPage: false, endCursor: null }),
@@ -126,7 +121,7 @@ describe('MarketplaceProvider connection lifecycle', () => {
     expect(sdk.connect).not.toHaveBeenCalled();
   });
 
-  it('embedded: renders demo data while connecting, then swaps to live and drops demo caches/drafts', async () => {
+  it('embedded: renders demo data while connecting, then swaps to live and drops demo caches', async () => {
     embedded.value = true;
     const live = liveHostStub();
     let resolveConnect!: (host: MarketplaceHost) => void;
@@ -137,15 +132,13 @@ describe('MarketplaceProvider connection lifecycle', () => {
     expect(screen.getByTestId('state').textContent).toBe('connecting');
     expect(screen.getByTestId('mode').textContent).toBe('demo');
 
-    // Simulate demo-era leftovers that must never reach the live session.
-    queryClient.setQueryData(['section', 'services', 'demo'], { heading: 'DEMO EDIT' });
-    saveDraft('services', { heading: 'DEMO DRAFT' });
+    // Simulate a demo-era cache entry that must never reach the live session.
+    queryClient.setQueryData(['workflows', 'demo'], [{ workflowId: 'demo-workflow' }]);
 
     resolveConnect(live);
     await untilState('live');
     expect(screen.getByTestId('mode').textContent).toBe('live');
-    expect(queryClient.getQueryData(['section', 'services', 'demo'])).toBeUndefined();
-    expect(loadDraft('services')).toBeNull();
+    expect(queryClient.getQueryData(['workflows', 'demo'])).toBeUndefined();
   });
 
   it('embedded: stays usable in labeled demo mode when the handshake fails, and retry can go live', async () => {
@@ -183,64 +176,6 @@ describe('MarketplaceProvider connection lifecycle', () => {
     // A stale completion from the first demo host would land under firstKey,
     // which nothing reads anymore.
     expect(secondKey).not.toBe(firstKey);
-  });
-
-  it('handoff: in-memory demo edits in the section editor never survive into the live session', async () => {
-    embedded.value = true;
-    const live = liveHostStub();
-    const liveValues = { heading: 'LIVE HEADING', note: 'LIVE', linkLabel: 'LIVE', linkHref: '#l' };
-    const saved: unknown[] = [];
-    live.loadSection = async () => ({ ...liveValues });
-    live.saveSection = async (_s, changed) => {
-      saved.push(changed);
-    };
-    let resolveConnect!: (host: MarketplaceHost) => void;
-    sdk.connect.mockReturnValue(new Promise((resolve) => (resolveConnect = resolve)));
-
-    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { hook } = memoryLocation({ path: '/sections/services' });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MarketplaceProvider>
-          <Probe />
-          <Router hook={hook}>
-            <Route path="/sections/:id" component={SectionEditor} />
-          </Router>
-        </MarketplaceProvider>
-      </QueryClientProvider>,
-    );
-
-    // Wait for the demo content to load, then type a demo-era edit.
-    let input: HTMLInputElement | null = null;
-    for (let i = 0; i < 200 && !input; i++) {
-      input = document.querySelector<HTMLInputElement>('input[id="field-heading"], textarea[id="field-heading"], [data-testid="input-heading"]');
-      if (!input) {
-        input = Array.from(document.querySelectorAll<HTMLInputElement>('input, textarea')).find(
-          (el) => el.value === 'WANT IT EVEN READIER?',
-        ) ?? null;
-      }
-      if (!input) await sleep(10);
-    }
-    expect(input, 'demo section editor should render an editable field').toBeTruthy();
-    fireEvent.change(input!, { target: { value: 'DEMO EDIT MUST NOT LEAK' } });
-
-    resolveConnect(live);
-    await untilState('live');
-
-    // The editor remounts on the new host generation and shows live values;
-    // the demo edit is gone and no draft can restore it.
-    for (let i = 0; i < 200; i++) {
-      const fields = Array.from(document.querySelectorAll<HTMLInputElement>('input, textarea'));
-      if (fields.some((el) => el.value === 'LIVE HEADING')) break;
-      await sleep(10);
-    }
-    const values = Array.from(document.querySelectorAll<HTMLInputElement>('input, textarea')).map(
-      (el) => el.value,
-    );
-    expect(values).toContain('LIVE HEADING');
-    expect(values).not.toContain('DEMO EDIT MUST NOT LEAK');
-    expect(loadDraft('services')).toBeNull();
-    expect(saved).toHaveLength(0);
   });
 
   it('handoff: workflow-builder draft state composed against demo cannot survive into live', async () => {

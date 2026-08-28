@@ -19,11 +19,11 @@ The app is always usable and always labels where its data comes from:
    in-memory demo workflow data while the Marketplace SDK handshake runs in
    parallel (only when actually embedded in a trusted Sitecore host).
 2. **Live** — once the handshake and API-resource access are verified, the app
-   atomically switches to live Sitecore workflow data. Demo caches and local
-   demo drafts are dropped on handoff; demo edits can never be saved to
-   Sitecore (host-generation cache keys + editor remount enforce this).
+   atomically switches to live Sitecore workflow data. Demo caches are dropped
+   on handoff, and host-generation cache keys plus routed-tree remounting keep
+   operations composed against one host from being submitted through another.
 3. **Standalone demo** — outside a Sitecore host (e.g. the Replit preview),
-   the app stays in demo mode. Demo edits are in-memory only.
+   the app stays in demo mode with in-memory workflow and content fixtures.
 4. **Sitecore unavailable (demo + retry)** — if the handshake fails, the app
    remains usable on demo data and offers a Retry action.
 
@@ -37,12 +37,10 @@ authentication was removed when the app became Marketplace-hosted.
 ## Routes
 
 - `/` — workflow command center (big-number metrics, queues, workflow list)
-- `/workflows/:id` — workflow detail with visual diagram
-- `/workflows/:id/states/:stateId` — review queue with workflow commands
+- `/workflows/:workflowId` — workflow detail with visual diagram
+- `/workflows/:workflowId/states/:stateId` — review queue with workflow commands
+- `/workflows/:workflowId/apply` — guarded content browser and workflow assignment
 - `/builder` — canvas-first workflow builder
-- `/content` — compatibility path: the earlier New Brand homepage content
-  editor (same host rules; demo edits stay in-memory)
-- `/sections/:id` — homepage section editor (compatibility)
 
 ## Local development
 

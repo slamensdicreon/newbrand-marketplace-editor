@@ -1,6 +1,5 @@
 import { ClientSDK } from '@sitecore-marketplace-sdk/client';
 import { XMC } from '@sitecore-marketplace-sdk/xmc';
-import type { SectionDefinition, SectionValues } from '@/lib/home-content';
 import {
   classifyTemplate,
   normalizeId,
@@ -26,7 +25,6 @@ import {
   resolveAllowedHostOrigin,
   type EditorUser,
   type MarketplaceHost,
-  type SiteSummary,
 } from './host';
 
 const HANDSHAKE_TIMEOUT_MS = 8000;
@@ -79,7 +77,7 @@ interface MarketplaceAppContext {
 /**
  * Live host: talks to SitecoreAI through the official Marketplace client
  * SDK. All Sitecore API traffic is mediated by the host application — this
- * app never sees or stores credentials or tokens. Content reads/writes go
+ * app never sees or stores credentials or tokens. Sitecore operations go
  * through the host's Authoring GraphQL bridge (`xmc.authoring.graphql`).
  */
 export class SdkMarketplaceHost implements MarketplaceHost {
@@ -156,14 +154,6 @@ export class SdkMarketplaceHost implements MarketplaceHost {
     return { name: user?.name ?? 'Sitecore editor', email: user?.email };
   }
 
-  async getSite(): Promise<SiteSummary> {
-    return {
-      siteName: 'New Brand',
-      homePath: '/sitecore/content/brands/new-brand/Home',
-      environment: 'XM Cloud (live authoring)',
-    };
-  }
-
   private async graphql(
     query: string,
     variables: Record<string, unknown>,
@@ -184,48 +174,6 @@ export class SdkMarketplaceHost implements MarketplaceHost {
       throw new Error('Empty response from the Sitecore Authoring API.');
     }
     return envelope.data;
-  }
-
-  async loadSection(section: SectionDefinition): Promise<SectionValues> {
-    const data = await this.graphql(
-      `query LoadSection($itemId: ID!, $language: String!) {
-        item(where: { itemId: $itemId, language: $language }) {
-          fields(ownFields: true) { nodes { name value } }
-        }
-      }`,
-      { itemId: section.itemId, language: LANGUAGE },
-    );
-    const item = data['item'] as
-      | { fields?: { nodes?: Array<{ name: string; value: string }> } }
-      | null
-      | undefined;
-    if (!item) {
-      throw new Error(`Sitecore item not found: ${section.itemPath}`);
-    }
-    const byName = new Map(
-      (item.fields?.nodes ?? []).map((n) => [n.name, n.value] as const),
-    );
-    const values: SectionValues = {};
-    for (const field of section.fields) {
-      values[field.key] = byName.get(field.key) ?? '';
-    }
-    return values;
-  }
-
-  async saveSection(section: SectionDefinition, changed: SectionValues): Promise<void> {
-    const allowed = new Set(section.fields.map((f) => f.key));
-    const fields = Object.entries(changed)
-      .filter(([key]) => allowed.has(key))
-      .map(([name, value]) => ({ name, value }));
-    if (fields.length === 0) return;
-    await this.graphql(
-      `mutation SaveSection($itemId: ID!, $language: String!, $fields: [FieldValueInput!]!) {
-        updateItem(input: { itemId: $itemId, language: $language, fields: $fields }) {
-          item { itemId }
-        }
-      }`,
-      { itemId: section.itemId, language: LANGUAGE, fields },
-    );
   }
 
   /* ---------------- Workflow operations ---------------- */
