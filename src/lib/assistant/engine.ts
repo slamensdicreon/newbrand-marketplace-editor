@@ -9,6 +9,7 @@ import type {
   AssistantContext,
   AssistantProposal,
   AssistantReply,
+  GuidedCreateDraft,
 } from './types';
 
 /**
@@ -30,6 +31,7 @@ const CAPABILITIES_TEXT =
   '• "How do I work from Page builder?"\n' +
   '• "show my workflows"\n' +
   '• "explain the Sample Workflow"\n' +
+  '• "help me build a new workflow" — I’ll ask for the name and states step by step\n' +
   '• "create a workflow called Legal Review with states Draft, In Review, Approved"\n' +
   '• "add a state called Legal Check to Sample Workflow"\n' +
   '• "add a transition called Escalate from Draft to Approved in Sample Workflow"\n' +
@@ -131,7 +133,11 @@ function nextDraftKey(): string {
   return `a${draftKey}`;
 }
 
-function buildCreateProposal(name: string, stateNames: string[]): AssistantProposal {
+function buildCreateProposal(
+  name: string,
+  stateNames: string[],
+  options: { reject?: boolean } = {},
+): AssistantProposal {
   const states = (stateNames.length >= 2
     ? stateNames
     : ['Draft', 'Awaiting Approval', 'Approved']
@@ -150,7 +156,7 @@ function buildCreateProposal(name: string, stateNames: string[]): AssistantPropo
     });
   }
   // A review flow needs a way back: reject from the state before final to the first.
-  if (states.length >= 3) {
+  if (states.length >= 3 && options.reject !== false) {
     transitions.push({
       name: 'Reject',
       fromKey: states[states.length - 2]!.key,
@@ -196,6 +202,147 @@ function stateGuidance(workflow: WorkflowInfo | undefined): AssistantReply {
   };
 }
 
+// --- Guided workflow creation ----------------------------------------------
+
+const GUIDED_CANCEL = /^(?:cancel|stop|quit|exit|never ?mind|forget it|start over)\b/;
+
+function describeStates(states: string[]): string {
+  return states.join(' → ');
+}
+
+function nameProblems(ctx: AssistantContext, name: string): string | undefined {
+  if (!name) return 'What should the new workflow be called?';
+  if (ctx.workflows.some((w) => norm(w.displayName) === norm(name))) {
+    return `A workflow named "${name}" already exists. What else could we call it?`;
+  }
+  const problems = validateDraftWorkflow({
+    name,
+    states: [
+      { key: 'x1', name: 'A', initial: true, final: false },
+      { key: 'x2', name: 'B', initial: false, final: true },
+    ],
+    transitions: [{ name: 'Go', fromKey: 'x1', toKey: 'x2' }],
+  });
+  if (problems.length > 0) return `${problems.join(' ')} What should we call it?`;
+  return undefined;
+}
+
+function stateProblems(states: string[]): string | undefined {
+  if (states.length < 2) {
+    return 'I need at least two states, listed in order from first to final — for example "Draft, In Review, Approved".';
+  }
+  const problems = validateDraftWorkflow({
+    name: 'Draft',
+    states: states.map((s, i, arr) => ({
+      key: `x${i}`,
+      name: s,
+      initial: i === 0,
+      final: i === arr.length - 1,
+    })),
+    transitions:
+      states.length >= 2 ? [{ name: 'Go', fromKey: 'x0', toKey: `x${states.length - 1}` }] : [],
+  });
+  if (problems.length > 0) return `${problems.join(' ')} Please list the states again.`;
+  return undefined;
+}
+
+/** Ask the next question or produce the proposal for a guided creation draft. */
+function advanceGuidedCreate(
+  draft: GuidedCreateDraft,
+  conversation: AssistantConversation | undefined,
+): AssistantReply {
+  const rest: AssistantConversation = { ...conversation, creating: undefined };
+  if (!draft.name) {
+    return {
+      text: 'Let’s build it together. What should the new workflow be called?',
+      conversation: { ...rest, creating: { step: 'name', states: draft.states } },
+    };
+  }
+  if (!draft.states) {
+    return {
+      text: `"${draft.name}" it is. Now list the states in order, from where content starts to where it becomes publishable — for example "Draft, In Review, Approved".`,
+      conversation: { ...rest, creating: { step: 'states', name: draft.name } },
+    };
+  }
+  const states = draft.states;
+  if (states.length >= 3) {
+    const reviewer = states[states.length - 2]!;
+    return {
+      text: `Got it: ${describeStates(states)}. "${states[0]}" will be the initial state and "${states[states.length - 1]}" the final, publishable one, with forward transitions between each step. Should editors also be able to send content back from "${reviewer}" to "${states[0]}" with a Reject transition? (yes or no)`,
+      conversation: { ...rest, creating: { step: 'reject', name: draft.name, states } },
+    };
+  }
+  return finishGuidedCreate(draft.name, states, true, rest);
+}
+
+function finishGuidedCreate(
+  name: string,
+  states: string[],
+  reject: boolean,
+  conversation: AssistantConversation,
+): AssistantReply {
+  const proposal = buildCreateProposal(name, states, { reject });
+  if (proposal.kind !== 'create-workflow') throw new Error('unreachable');
+  const problems = validateDraftWorkflow(proposal.spec);
+  if (problems.length > 0) {
+    return {
+      text: `I can’t draft that workflow yet: ${problems.join(' ')} Say "build a new workflow" to start again.`,
+      conversation,
+    };
+  }
+  return {
+    text: `Here’s the draft of "${name}": ${describeStates(states)}${
+      reject && states.length >= 3 ? ', plus a Reject transition back to the start' : ''
+    }. Review the diagram and confirm to create it in Sitecore — nothing is created until you do.`,
+    proposal,
+    conversation,
+  };
+}
+
+/** Interpret the user's answer to the current guided-creation question. */
+function continueGuidedCreate(
+  input: string,
+  ctx: AssistantContext,
+  conversation: AssistantConversation,
+): AssistantReply {
+  const draft = conversation.creating!;
+  const msg = norm(input);
+  const rest: AssistantConversation = { ...conversation, creating: undefined };
+  if (GUIDED_CANCEL.test(msg)) {
+    return {
+      text: 'Okay, I’ve dropped that draft. Nothing was created. Say "build a new workflow" whenever you want to start again.',
+      conversation: rest,
+    };
+  }
+  if (draft.step === 'name') {
+    const name = unquote(
+      input.replace(/^(?:call it|name it|let'?s call it|it'?s called|the name is|named?|called)\s+/i, ''),
+    );
+    const problem = nameProblems(ctx, name);
+    if (problem) return { text: problem, conversation };
+    return advanceGuidedCreate({ step: 'states', name, states: draft.states }, rest);
+  }
+  if (draft.step === 'states') {
+    const states = splitList(
+      input.replace(/^(?:the\s+)?states?\s*(?:are|is|:)?\s*/i, '').replace(/\.$/, ''),
+    );
+    const problem = stateProblems(states);
+    if (problem) return { text: problem, conversation };
+    return advanceGuidedCreate({ step: 'reject', name: draft.name, states }, rest);
+  }
+  // step === 'reject'
+  if (/^(?:y|yes|yeah|yep|sure|ok|okay|please|add it|do it)\b/.test(msg)) {
+    return finishGuidedCreate(draft.name!, draft.states!, true, rest);
+  }
+  if (/^(?:n|no|nope|skip|don'?t|not needed|no reject)\b/.test(msg)) {
+    return finishGuidedCreate(draft.name!, draft.states!, false, rest);
+  }
+  return {
+    text: `Should I add a Reject transition from "${draft.states![draft.states!.length - 2]}" back to "${draft.states![0]}"? Please answer yes or no (or say cancel).`,
+    conversation,
+  };
+}
+
 export function parseMessage(
   input: string,
   ctx: AssistantContext,
@@ -205,8 +352,17 @@ export function parseMessage(
   if (!msg) return { text: CAPABILITIES_TEXT, embed: { kind: 'capabilities' } };
   const currentWorkflow = selectedWorkflow(ctx, conversation);
 
+  // --- Guided creation in progress: the message answers FLO's question ----
+  if (conversation?.creating) {
+    return continueGuidedCreate(input, ctx, conversation);
+  }
+
   // --- Help / capabilities ------------------------------------------------
-  if (/^(help|what can you do|capabilities|hi|hello|hey)\b/.test(msg) || msg === '?') {
+  if (
+    /^(?:hi|hello|hey)\b/.test(msg) ||
+    /^(?:help|what can you do|capabilities)[!.?]*$/.test(msg) ||
+    msg === '?'
+  ) {
     return { text: CAPABILITIES_TEXT, embed: { kind: 'capabilities' } };
   }
 
@@ -299,10 +455,34 @@ export function parseMessage(
     }
   }
 
+  // --- Guided create: gather the inputs conversationally -------------------
+  if (
+    (/\b(?:create|build|make|set\s*up|design|start|draft|new)\b/.test(msg) &&
+      /\bworkflows?\b/.test(msg) &&
+      !/\b(?:add|delete|remove|assign|explain|show|list)\b/.test(msg)) ||
+    /\bworkflow\b.*\bfrom scratch\b/.test(msg)
+  ) {
+    const nameMatch = input.match(/\b(?:called|named)\s+"?([^"]+?)"?(?:\s+with\b|\s*[.?!]*$)/i);
+    const statesMatch = input.match(/\bwith\s+(?:the\s+)?(?:following\s+)?states?\s*(?::|of)?\s+(.+)$/i);
+    const name = nameMatch ? unquote(nameMatch[1]!) : undefined;
+    const states = statesMatch ? splitList(statesMatch[1]!.replace(/[.?!]+$/, '')) : undefined;
+    const rest: AssistantConversation = { ...conversation, creating: undefined };
+    if (name && nameProblems(ctx, name)) {
+      return { text: nameProblems(ctx, name)!, conversation: { ...rest, creating: { step: 'name' } } };
+    }
+    if (states && stateProblems(states)) {
+      return {
+        text: stateProblems(states)!,
+        conversation: { ...rest, creating: { step: 'states', name } },
+      };
+    }
+    return advanceGuidedCreate({ step: 'name', name, states }, rest);
+  }
+
   // --- Add state ------------------------------------------------------------
   {
     const m = input.match(
-      /add\s+(?:a\s+)?(final\s+)?state\s+(?:called|named)?\s*"?([^"]+?)"?(?:\s+(?:to|in)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
+      /add\s+(?:a\s+)?(?:new\s+)?(final\s+)?state\s+(?:called|named)?\s*"?([^"]+?)"?(?:\s+(?:to|in)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
     );
     if (m) {
       const finalFlag = !!m[1] || /\bfinal\b/i.test(input);
@@ -347,7 +527,7 @@ export function parseMessage(
   // --- Add transition -------------------------------------------------------
   {
     const m = input.match(
-      /add\s+(?:a\s+)?(?:transition|command)\s+(?:called|named)?\s*"?([^"]+?)"?\s+from\s+"?([^"]+?)"?\s+to\s+"?([^"]+?)"?(?:\s+(?:in|on)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
+      /add\s+(?:a\s+)?(?:new\s+)?(?:transition|command)\s+(?:called|named)?\s*"?([^"]+?)"?\s+from\s+"?([^"]+?)"?\s+to\s+"?([^"]+?)"?(?:\s+(?:in|on)\s+(?:the\s+)?"?([^"]+?)"?)?\s*$/i,
     );
     if (m) {
       const cmdName = unquote(m[1]!);
@@ -544,6 +724,7 @@ export function parseMessage(
 }
 
 export const ASSISTANT_SUGGESTIONS = [
+  'Help me build a new workflow',
   'How should I use the work inbox?',
   'How do AI quality checks work?',
   'How do I assign content to a workflow?',

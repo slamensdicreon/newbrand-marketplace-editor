@@ -296,4 +296,116 @@ describe('assistant engine', () => {
     expect(r.proposal).toBeUndefined();
     expect(r.embed).toEqual({ kind: 'capabilities' });
   });
+
+  describe('guided workflow creation', () => {
+    it.each([
+      'I want to build a new workflow',
+      'help me create a workflow',
+      'can you make a workflow for me?',
+      'set up a new workflow from scratch',
+    ])('starts the guided flow for: %s', (prompt) => {
+      const r = parseMessage(prompt, ctx);
+      expect(r.proposal).toBeUndefined();
+      expect(r.text).toMatch(/what should the new workflow be called/i);
+      expect(r.conversation?.creating).toEqual({ step: 'name' });
+    });
+
+    it('collects name, states and reject choice, then proposes without creating anything', () => {
+      const step1 = parseMessage('build a new workflow', ctx);
+      const step2 = parseMessage('Legal Review', ctx, step1.conversation);
+      expect(step2.proposal).toBeUndefined();
+      expect(step2.text).toMatch(/list the states in order/i);
+      expect(step2.conversation?.creating).toEqual({ step: 'states', name: 'Legal Review' });
+
+      const step3 = parseMessage('Draft, Legal Check and Approved', ctx, step2.conversation);
+      expect(step3.proposal).toBeUndefined();
+      expect(step3.text).toMatch(/Reject transition/);
+      expect(step3.conversation?.creating).toEqual({
+        step: 'reject',
+        name: 'Legal Review',
+        states: ['Draft', 'Legal Check', 'Approved'],
+      });
+
+      const step4 = parseMessage('yes', ctx, step3.conversation);
+      expect(step4.conversation?.creating).toBeUndefined();
+      expect(step4.proposal?.kind).toBe('create-workflow');
+      if (step4.proposal?.kind !== 'create-workflow') throw new Error('expected proposal');
+      expect(step4.proposal.spec.name).toBe('Legal Review');
+      expect(step4.proposal.spec.states.map((s) => s.name)).toEqual([
+        'Draft',
+        'Legal Check',
+        'Approved',
+      ]);
+      expect(step4.proposal.spec.states[0]?.initial).toBe(true);
+      expect(step4.proposal.spec.states[2]?.final).toBe(true);
+      expect(step4.proposal.spec.transitions.map((t) => t.name)).toEqual([
+        'Submit',
+        'Approve',
+        'Reject',
+      ]);
+    });
+
+    it('omits the reject transition when declined', () => {
+      const convo = {
+        creating: { step: 'reject' as const, name: 'Legal Review', states: ['Draft', 'Check', 'Done'] },
+      };
+      const r = parseMessage('no', ctx, convo);
+      if (r.proposal?.kind !== 'create-workflow') throw new Error('expected proposal');
+      expect(r.proposal.spec.transitions.map((t) => t.name)).toEqual(['Submit', 'Approve']);
+    });
+
+    it('skips the reject question for a two-state workflow', () => {
+      const r = parseMessage('Draft, Approved', ctx, {
+        creating: { step: 'states', name: 'Quick Publish' },
+      });
+      expect(r.proposal?.kind).toBe('create-workflow');
+      expect(r.conversation?.creating).toBeUndefined();
+    });
+
+    it('skips questions already answered in the opening message', () => {
+      const r = parseMessage('build a new workflow called Legal Review', ctx);
+      expect(r.text).toMatch(/list the states/i);
+      expect(r.conversation?.creating).toEqual({ step: 'states', name: 'Legal Review' });
+    });
+
+    it('re-asks for a name that duplicates an existing workflow', () => {
+      const r = parseMessage('Sample Workflow', ctx, { creating: { step: 'name' } });
+      expect(r.text).toMatch(/already exists/i);
+      expect(r.conversation?.creating).toEqual({ step: 'name' });
+    });
+
+    it('re-asks when fewer than two states are given', () => {
+      const r = parseMessage('Draft', ctx, { creating: { step: 'states', name: 'X' } });
+      expect(r.text).toMatch(/at least two states/i);
+      expect(r.conversation?.creating).toEqual({ step: 'states', name: 'X' });
+    });
+
+    it('cancels cleanly without a proposal', () => {
+      const r = parseMessage('never mind', ctx, { creating: { step: 'states', name: 'X' } });
+      expect(r.proposal).toBeUndefined();
+      expect(r.text).toMatch(/nothing was created/i);
+      expect(r.conversation?.creating).toBeUndefined();
+    });
+
+    it('still honours the one-shot create command', () => {
+      const r = parseMessage('create a workflow called One Shot with states A, B, C', ctx);
+      expect(r.proposal?.kind).toBe('create-workflow');
+      expect(r.conversation?.creating).toBeUndefined();
+    });
+
+    it('still selects a workflow whose name contains a trigger word', () => {
+      const newCtx: AssistantContext = {
+        workflows: [{ workflowId: 'wf-new', displayName: 'New Workflow', states: sampleGraph.states }],
+        graphs: {},
+      };
+      const r = parseMessage('New Workflow', newCtx);
+      expect(r.conversation?.creating).toBeUndefined();
+      expect(r.embed).toEqual({ kind: 'workflow-overview', workflowId: 'wf-new' });
+    });
+
+    it('does not hijack add-state or add-transition requests', () => {
+      const r = parseMessage('add a new state called Legal Check to Sample Workflow', ctx);
+      expect(r.proposal?.kind).toBe('add-state');
+    });
+  });
 });

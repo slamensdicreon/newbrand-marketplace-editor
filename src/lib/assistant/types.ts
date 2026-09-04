@@ -33,6 +33,18 @@ export interface AssistantContext {
 export interface AssistantConversation {
   selectedWorkflowId?: string;
   awaitingWorkflowIds?: string[];
+  /**
+   * In-progress guided "build a workflow" conversation. Holds only the
+   * names the user has typed so far; nothing is created until the resulting
+   * proposal card is confirmed.
+   */
+  creating?: GuidedCreateDraft;
+}
+
+export interface GuidedCreateDraft {
+  step: 'name' | 'states' | 'reject';
+  name?: string;
+  states?: string[];
 }
 
 export type AssistantProposal =
