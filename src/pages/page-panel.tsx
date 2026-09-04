@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { BrandReviewPanel } from '@/components/brand-review';
+import type { BrandReviewResult } from '@/lib/workflow/brand-review';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -145,6 +147,18 @@ function PageStatus({
 }) {
   const status = useItemWorkflowStatus(itemId, language);
   usePageContentUpdates(itemId);
+  // Latest advisory AI quality check for this page. Purely informational:
+  // results never trigger, block, or modify workflow commands. Staleness is
+  // judged against the page's CURRENT __Updated value, which is refreshed by
+  // usePageContentUpdates whenever the Page builder reports a fields/layout
+  // save — so a review is flagged immediately when the page changes.
+  const [review, setReview] = useState<BrandReviewResult | null>(null);
+  const handleReview = (result: BrandReviewResult) => {
+    setReview(result);
+    // Re-resolve the page's updated timestamp so a just-generated review is
+    // compared against equally fresh page state.
+    void status.refetch();
+  };
 
   if (status.isLoading) {
     return (
@@ -189,6 +203,14 @@ function PageStatus({
         </p>
       </section>
 
+      <BrandReviewPanel
+        itemId={itemId}
+        language={language}
+        itemUpdatedAt={data?.updatedAt ?? null}
+        review={review}
+        onReview={handleReview}
+      />
+
       {!data || !workflow || !state ? (
         <div
           className="rounded-lg border border-dashed border-border p-3 text-center"
@@ -196,7 +218,7 @@ function PageStatus({
         >
           <p className="text-xs text-muted-foreground">
             This page is not in a workflow. Assign one from{' '}
-            <FullAppLink href="workflows" label="Workflow Operations" inline />.
+            <FullAppLink href="workflows" label="WorkFLO" inline />.
           </p>
         </div>
       ) : (
@@ -320,7 +342,7 @@ function WorkflowSection({
 }
 
 /**
- * Link into the full Workflow Operations app. The panel is an embedded
+ * Link into the full WorkFLO app. The panel is an embedded
  * context view, so the full app opens in a new tab at the same deployment.
  */
 function FullAppLink({

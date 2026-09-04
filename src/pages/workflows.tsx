@@ -89,7 +89,7 @@ export default function Workflows() {
   return (
     <div className="min-h-full w-full bg-background pb-24">
       <PageHeader
-        title="Sitecore Workflow Operations"
+        title="WorkFLO"
         subtitle="Content review across your workflows"
         right={
           user.isLoading ? (

@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useRoute } from 'wouter';
 import {
   CloudOff,
-  ChevronRight,
+  CircleHelp,
   GitBranch,
   Inbox,
   Loader2,
@@ -14,21 +14,74 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChatPanel } from '@/components/assistant/chat-panel';
+import { WorkFLOLogo } from '@/components/workflo-brand';
+import {
+  BUILDER_ONBOARDING_STORAGE_KEY,
+  BUILDER_TOUR,
+  ONBOARDING_STORAGE_KEY,
+  OPEN_BUILDER_TOUR_EVENT,
+  OPEN_TOUR_EVENT,
+  OnboardingTour,
+  WORKFLO_TOUR,
+} from '@/components/onboarding-tour';
 import { useEditorUser, useMarketplace, useWorkflows } from '@/lib/marketplace/provider';
 import { cn } from '@/lib/utils';
-import icreonLogo from '@/assets/icreon-logo.png';
 
 /**
- * Enterprise workspace shell: a persistent three-pane layout.
- *   1/6 — left navigation rail (product areas + workflows + connection);
- *   2/6 — conversational workflow assistant;
- *   3/6 — the routed workspace content.
- * Below the `lg` breakpoint the rail collapses to a top bar and the
- * assistant becomes a slide-over toggled from the bar, so the workspace
- * keeps a usable single-column fallback.
+ * Enterprise workspace shell with persistent navigation and a floating
+ * assistant. Chat is deliberately outside the page grid so opening it never
+ * reflows the editor's working area.
  */
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const [chatOpen, setChatOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [builderTourOpen, setBuilderTourOpen] = useState(false);
+  const [location] = useLocation();
+  const onBuilder = location === '/builder' || location.startsWith('/builder/');
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(ONBOARDING_STORAGE_KEY) !== 'complete') {
+        setTourOpen(true);
+      }
+    } catch {
+      setTourOpen(true);
+    }
+  }, []);
+
+  // First visit to the Builder opens its own tutorial, tracked independently
+  // of the general tour. If the general tour is currently showing, wait until
+  // it closes so the two overlays never stack.
+  useEffect(() => {
+    if (!onBuilder || tourOpen || builderTourOpen) return;
+    try {
+      // The general first-visit tour has priority; the Escape/close of that
+      // tour flips `tourOpen`, re-running this effect.
+      if (window.localStorage.getItem(ONBOARDING_STORAGE_KEY) !== 'complete') return;
+      if (window.localStorage.getItem(BUILDER_ONBOARDING_STORAGE_KEY) !== 'complete') {
+        setBuilderTourOpen(true);
+      }
+    } catch {
+      setBuilderTourOpen(true);
+    }
+  }, [onBuilder, tourOpen, builderTourOpen]);
+
+  useEffect(() => {
+    const openTour = () => {
+      setBuilderTourOpen(false);
+      setTourOpen(true);
+    };
+    const openBuilderTour = () => {
+      setTourOpen(false);
+      setBuilderTourOpen(true);
+    };
+    window.addEventListener(OPEN_TOUR_EVENT, openTour);
+    window.addEventListener(OPEN_BUILDER_TOUR_EVENT, openBuilderTour);
+    return () => {
+      window.removeEventListener(OPEN_TOUR_EVENT, openTour);
+      window.removeEventListener(OPEN_BUILDER_TOUR_EVENT, openBuilderTour);
+    };
+  }, []);
 
   return (
     <div className="flex h-[100dvh] w-full flex-col bg-muted/40 lg:grid lg:grid-cols-6">
@@ -44,45 +97,46 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           <TopLink href="/" label="Work inbox" />
           <TopLink href="/workflows" label="Workflows" />
           <TopLink href="/builder" label="Builder" />
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
+          <TopTourButton
+            label="Overview"
+            event={OPEN_TOUR_EVENT}
+            testId="button-open-workflo-tour-mobile"
+          />
+          <TopTourButton
+            label="Builder guide"
+            event={OPEN_BUILDER_TOUR_EVENT}
+            testId="button-open-builder-tour-mobile"
+          />
         </nav>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setChatOpen(true)}
-          data-testid="button-open-assistant"
-        >
-          <MessageSquareText className="size-4" /> Assistant
-        </Button>
       </header>
 
-      {/* --- Assistant (col 2 on desktop, slide-over on mobile) --- */}
-      <section
-        className={cn(
-          'min-h-0 bg-background transition-[width,transform] duration-200',
-          chatOpen
-            ? 'fixed inset-0 z-40 flex flex-col motion-safe:animate-in motion-safe:slide-in-from-left-full motion-safe:duration-200 lg:static lg:z-auto lg:col-span-2 lg:border-r lg:border-border'
-            : 'hidden',
-        )}
-      >
-        <ChatPanel className="flex-1" onClose={() => setChatOpen(false)} />
-      </section>
+      <main className="min-h-0 flex-1 overflow-y-auto lg:col-span-5">{children}</main>
 
-      {/* --- Workspace content (col 3-6 → spans 3) --- */}
-      <main className={cn('min-h-0 flex-1 overflow-y-auto', chatOpen ? 'lg:col-span-3' : 'lg:col-span-5')}>
-        {children}
-      </main>
-      {!chatOpen && (
-        <Button
-          size="icon"
-          variant="outline"
-          className="fixed left-[calc(16.6667%+0.75rem)] top-1/2 z-30 hidden -translate-y-1/2 rounded-full bg-background shadow-md lg:flex"
-          onClick={() => setChatOpen(true)}
-          aria-label="Open workflow assistant"
-          data-testid="button-reopen-assistant"
+      {chatOpen ? (
+        <section
+          role="dialog"
+          aria-label="Chat with FLO"
+          className="fixed inset-x-3 bottom-3 top-3 z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 sm:inset-auto sm:bottom-6 sm:right-6 sm:h-[min(720px,calc(100dvh-3rem))] sm:w-[min(440px,calc(100vw-3rem))]"
         >
-          <ChevronRight className="size-4" />
-        </Button>
+          <ChatPanel className="flex-1" onClose={() => setChatOpen(false)} />
+        </section>
+      ) : (
+        <div className="fixed bottom-5 right-5 z-40 sm:bottom-6 sm:right-6">
+          <span className="absolute inset-0 rounded-full bg-primary/35 motion-safe:animate-ping" />
+          <Button
+            size="icon"
+            className="relative size-12 rounded-full shadow-lg transition-transform hover:scale-110"
+            onClick={() => setChatOpen(true)}
+            aria-label="Chat with FLO"
+            data-testid="button-open-assistant"
+          >
+            <MessageSquareText className="size-5" />
+          </Button>
+        </div>
       )}
+      <OnboardingTour tour={WORKFLO_TOUR} open={tourOpen} onOpenChange={setTourOpen} />
+      <OnboardingTour tour={BUILDER_TOUR} open={builderTourOpen} onOpenChange={setBuilderTourOpen} />
     </div>
   );
 }
@@ -90,17 +144,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 function Brand({ compact }: { compact?: boolean }) {
   return (
     <Link href="/" className="flex min-w-0 items-center gap-2.5" data-testid="link-brand">
-      <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-background">
-        <img src={icreonLogo} alt="" className="size-full object-contain" />
-      </div>
-      {!compact && (
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight text-sidebar-foreground">
-            Workflow Operations
-          </p>
-          <p className="truncate text-[11px] leading-tight text-muted-foreground">Sitecore</p>
-        </div>
-      )}
+      <WorkFLOLogo compact={compact} />
+      {!compact && <span className="sr-only">Sitecore workflow operations</span>}
     </Link>
   );
 }
@@ -120,6 +165,28 @@ function TopLink({ href, label }: { href: string; label: string }) {
   );
 }
 
+/** Mobile "How It Works" entry: replays a tutorial from the top bar. */
+function TopTourButton({
+  label,
+  event,
+  testId,
+}: {
+  label: string;
+  event: string;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => window.dispatchEvent(new CustomEvent(event))}
+      className="flex shrink-0 items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+      data-testid={testId}
+    >
+      <CircleHelp className="size-3.5" /> {label}
+    </button>
+  );
+}
+
 function NavRail() {
   const workflows = useWorkflows();
   const user = useEditorUser();
@@ -136,7 +203,7 @@ function NavRail() {
 
   return (
     <>
-      <div className="border-b border-sidebar-border px-4 py-4">
+      <div className="border-b border-border px-4 py-3.5">
         <Brand />
       </div>
 
@@ -168,6 +235,27 @@ function NavRail() {
       </nav>
 
       <div className="border-t border-sidebar-border px-3 py-3">
+        <div className="mb-3" aria-label="How It Works">
+          <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            How It Works
+          </p>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent(OPEN_TOUR_EVENT))}
+            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-sidebar-foreground"
+            data-testid="button-open-workflo-tour"
+          >
+            <CircleHelp className="size-3.5 shrink-0" /> WorkFLO overview
+          </button>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent(OPEN_BUILDER_TOUR_EVENT))}
+            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-sidebar-foreground"
+            data-testid="button-open-builder-tour"
+          >
+            <PencilRuler className="size-3.5 shrink-0" /> Build your first workflow
+          </button>
+        </div>
         <ConnectionState />
         {user.data && (
           <div className="mt-3 flex items-center gap-2">

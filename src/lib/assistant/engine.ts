@@ -23,7 +23,11 @@ import type {
  */
 
 const CAPABILITIES_TEXT =
-  'I can help you understand and change Sitecore workflows. Try:\n' +
+  'I’m FLO, your WorkFLO guide. Here are a few things we can do together:\n' +
+  '• "How should I use the work inbox?"\n' +
+  '• "How do AI quality checks work?"\n' +
+  '• "How do I assign content to a workflow?"\n' +
+  '• "How do I work from Page builder?"\n' +
   '• "show my workflows"\n' +
   '• "explain the Sample Workflow"\n' +
   '• "create a workflow called Legal Review with states Draft, In Review, Approved"\n' +
@@ -32,6 +36,17 @@ const CAPABILITIES_TEXT =
   '• "delete the Reject transition in Sample Workflow"\n' +
   '• "what commands are available in Awaiting Approval?"\n' +
   'Every change is shown as a proposal you review and confirm — nothing is applied automatically.';
+
+const OPERATIONS_GUIDANCE = {
+  inbox:
+    'The Work inbox combines your actionable workflow queues into one prioritized view. Start at Work inbox, use the queue filters to focus the list, open an item to inspect its history and available commands, then choose the appropriate workflow action. Commands come from the item’s current Sitecore state and always require confirmation.',
+  brandReview:
+    'Use AI check on a queue item or in the Page builder workflow panel to run Sitecore Brand Review against the current item and its verified local component datasources. The score, reasons, and suggestions are advisory only: they never approve, reject, publish, rewrite content, bypass permissions, or disable workflow commands. If content changes, the result is marked stale and should be rerun.',
+  assignment:
+    'Content browsing is used only to assign items to workflows. Open the assignment flow, select the content item and workflow, review the target initial state, and confirm. Editing page fields still happens in Sitecore’s editing tools—not in WorkFLO.',
+  pageBuilder:
+    'Inside SitecoreAI Page builder, open the WorkFLO panel for the current page. It shows live workflow status, available commands, history, and the advisory AI quality check without leaving the page. Save content changes in Page builder first, then rerun an AI check if an earlier result is marked stale.',
+} as const;
 
 function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -193,6 +208,25 @@ export function parseMessage(
   // --- Help / capabilities ------------------------------------------------
   if (/^(help|what can you do|capabilities|hi|hello|hey)\b/.test(msg) || msg === '?') {
     return { text: CAPABILITIES_TEXT, embed: { kind: 'capabilities' } };
+  }
+
+  // --- Operate the editorial workspace -------------------------------------
+  if (/\b(?:work\s*inbox|prioriti[sz](?:e|ed|ation)|queue filters?)\b/.test(msg)) {
+    return { text: OPERATIONS_GUIDANCE.inbox };
+  }
+  if (
+    /\b(?:ai check|ai quality|brand review|quality check|review score|stale review)\b/.test(msg)
+  ) {
+    return { text: OPERATIONS_GUIDANCE.brandReview };
+  }
+  if (
+    /\b(?:assign|assignment)\b.*\b(?:content|item|page|workflow)\b/.test(msg) ||
+    /\b(?:content|item|page)\b.*\b(?:assign|assignment)\b/.test(msg)
+  ) {
+    return { text: OPERATIONS_GUIDANCE.assignment };
+  }
+  if (/\b(?:page builder|pagebuilder|in-page|side panel|workflow panel)\b/.test(msg)) {
+    return { text: OPERATIONS_GUIDANCE.pageBuilder };
   }
 
   // --- Learn workflow concepts ---------------------------------------------
@@ -510,8 +544,8 @@ export function parseMessage(
 }
 
 export const ASSISTANT_SUGGESTIONS = [
-  'Show my workflows',
-  'Create a workflow called Content Review',
-  'Add a state called Legal Check to Sample Workflow',
-  'What commands are available in Awaiting Approval?',
+  'How should I use the work inbox?',
+  'How do AI quality checks work?',
+  'How do I assign content to a workflow?',
+  'How do I work from Page builder?',
 ];

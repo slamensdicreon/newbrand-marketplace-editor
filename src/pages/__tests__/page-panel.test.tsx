@@ -18,11 +18,14 @@ const mocks = vi.hoisted(() => ({
     getWorkflowGraph: vi.fn(),
     subscribePageContext: vi.fn(),
     subscribeContentUpdates: vi.fn(),
+    getBrandReviewSupport: vi.fn(),
+    getItemReviewContent: vi.fn(),
+    generateBrandReview: vi.fn(),
   },
 }));
 
 vi.mock('@/lib/marketplace/provider', async (original) => {
-  const { useQuery, useQueryClient } = await import('@tanstack/react-query');
+  const { useQuery, useQueryClient, useMutation } = await import('@tanstack/react-query');
   const actual = await original<typeof import('@/lib/marketplace/provider')>();
   const { useEffect, useState } = await import('react');
   const host = mocks.host as unknown as import('@/lib/marketplace/host').MarketplaceHost;
@@ -83,6 +86,30 @@ vi.mock('@/lib/marketplace/provider', async (original) => {
         queryKey: ['workflow-graph', workflowId, 'test:1'],
         queryFn: () => mocks.host.getWorkflowGraph(workflowId!),
         enabled: !!workflowId,
+      }),
+    useBrandReviewSupport: () =>
+      useQuery({
+        queryKey: ['brand-review-support', 'test:1'],
+        queryFn: () => mocks.host.getBrandReviewSupport(),
+      }),
+    useGenerateBrandReview: () =>
+      useMutation({
+        mutationFn: async (args: { itemId: string; language: string }) => {
+          const support = await mocks.host.getBrandReviewSupport();
+          if (!support.available || !support.brandKitId) {
+            throw new Error(support.message ?? 'Brand Review is not available.');
+          }
+          const content = await mocks.host.getItemReviewContent(args.itemId, args.language);
+          const sections = await mocks.host.generateBrandReview(support.brandKitId, content);
+          return {
+            generatedAt: new Date().toISOString(),
+            fingerprint: 'fp-test',
+            contentUpdatedAt: content.updatedAt,
+            demo: false,
+            truncated: content.truncated,
+            sections,
+          };
+        },
       }),
   };
 });
@@ -164,6 +191,22 @@ beforeEach(() => {
     message: null,
     nextStateId: 'st-done',
   });
+  mocks.host.getBrandReviewSupport.mockResolvedValue({
+    available: true,
+    brandKitId: 'kit-1',
+    message: null,
+  });
+  mocks.host.getItemReviewContent.mockImplementation(async (itemId: string) => ({
+    itemId,
+    language: 'en',
+    version: 1,
+    updatedAt: '2026-08-01T00:00:00Z',
+    entries: [{ source: 'field', label: 'Title', text: 'Hello' }],
+    truncated: false,
+  }));
+  mocks.host.generateBrandReview.mockResolvedValue([
+    { sectionId: 'voice-and-tone', score: 4, reason: 'Good.', suggestion: 'Keep it.', fields: [] },
+  ]);
 });
 
 afterEach(cleanup);
@@ -319,6 +362,60 @@ describe('Page builder workflow panel', () => {
 
     await new Promise((r) => setTimeout(r, 20));
     expect(mocks.host.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('offers the advisory AI quality check for the current page without touching commands', async () => {
+    // Pin the page's __Updated to the timestamp captured at review time.
+    mocks.host.getItemWorkflowStatus.mockImplementation(async (itemId: string) =>
+      makeStatus(itemId, { updatedAt: '2026-08-01T00:00:00Z' }),
+    );
+    renderPanel();
+    emitPage(makePage('page-a', 'Home'));
+    await waitFor(() => expect(screen.getByTestId('panel-brand-review-page-a')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('button-run-brand-review-page-a'));
+    await waitFor(() => expect(screen.getByTestId('results-brand-review')).toBeTruthy());
+    expect(screen.getByTestId('badge-section-score-voice-and-tone').textContent).toContain('4/5');
+    expect(mocks.host.getItemReviewContent).toHaveBeenCalledWith('page-a', 'en');
+    // The critical separation: AI analysis never executes workflow commands.
+    expect(mocks.host.executeCommand).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('badge-review-stale')).toBeNull();
+  });
+
+  it('flags a review as stale as soon as the Page builder reports a content change', async () => {
+    // Pin the page's __Updated to exactly the timestamp captured at review time.
+    mocks.host.getItemWorkflowStatus.mockImplementation(async (itemId: string) =>
+      makeStatus(itemId, { updatedAt: '2026-08-01T00:00:00Z' }),
+    );
+    renderPanel();
+    emitPage(makePage('page-a', 'Home'));
+    await waitFor(() => expect(screen.getByTestId('panel-brand-review-page-a')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('button-run-brand-review-page-a'));
+    await waitFor(() => expect(screen.getByTestId('results-brand-review')).toBeTruthy());
+    expect(screen.queryByTestId('badge-review-stale')).toBeNull();
+
+    // The editor saves the page: the host now reports a newer __Updated, and
+    // the panel's live content-update subscription refetches the status.
+    mocks.host.getItemWorkflowStatus.mockImplementation(async (itemId: string) =>
+      makeStatus(itemId, { updatedAt: '2026-08-02T00:00:00Z' }),
+    );
+    act(() => {
+      for (const listener of mocks.updateListeners) listener();
+    });
+    await waitFor(() => expect(screen.getByTestId('badge-review-stale')).toBeTruthy());
+    // Still purely advisory — nothing was executed.
+    expect(mocks.host.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('drops the previous page review when the Page builder navigates', async () => {
+    renderPanel();
+    emitPage(makePage('page-a', 'Home'));
+    await waitFor(() => expect(screen.getByTestId('panel-brand-review-page-a')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('button-run-brand-review-page-a'));
+    await waitFor(() => expect(screen.getByTestId('results-brand-review')).toBeTruthy());
+
+    emitPage(makePage('page-b', 'Spring'));
+    await waitFor(() => expect(screen.getByTestId('panel-brand-review-page-b')).toBeTruthy());
+    expect(screen.queryByTestId('results-brand-review')).toBeNull();
   });
 
   it('refetches workflow status when the Page builder reports a content change', async () => {

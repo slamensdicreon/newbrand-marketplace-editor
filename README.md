@@ -1,4 +1,4 @@
-# Sitecore Workflow Operations
+# WorkFLO
 
 A workflow command center for Sitecore content teams. It runs inside the
 Sitecore Marketplace (SitecoreAI) and uses the Marketplace host session as its
@@ -6,7 +6,7 @@ only identity — the app has **no login of its own** and never stores Sitecore
 credentials, tokens, or secrets in the browser.
 
 - Preview path: `/home-editor/` (kept for compatibility with the original
-  registration; the product name is Sitecore Workflow Operations).
+  registration; the product name is WorkFLO).
 - Frontend: React + Vite (`artifacts/home-editor`).
 - No app backend: live data flows through the Marketplace bridge
   (`xmc.authoring.graphql`) with the host-verified `sitecoreContextId`.

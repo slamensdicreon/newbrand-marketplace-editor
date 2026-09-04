@@ -33,6 +33,19 @@ describe('assistant engine', () => {
     const r = parseMessage('help', ctx);
     expect(r.proposal).toBeUndefined();
     expect(r.text).toMatch(/confirm/i);
+    expect(r.text).toMatch(/work inbox/i);
+    expect(r.text).toMatch(/AI quality checks/i);
+  });
+
+  it.each([
+    ['How should I use the work inbox?', /prioritized view/i],
+    ['How do AI quality checks work?', /advisory only/i],
+    ['How do I assign content to a workflow?', /editing page fields still happens/i],
+    ['How do I work from Page builder?', /live workflow status/i],
+  ])('explains current operations feature: %s', (prompt, expected) => {
+    const reply = parseMessage(prompt, ctx);
+    expect(reply.text).toMatch(expected);
+    expect(reply.proposal).toBeUndefined();
   });
 
   it('lists workflows', () => {

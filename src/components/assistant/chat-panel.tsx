@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, Check, ChevronLeft, Loader2, Send, Sparkles, X } from 'lucide-react';
+import { ArrowRight, Check, Loader2, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { WorkflowCanvas } from '@/components/workflow-canvas';
+import { FLOAvatar } from '@/components/workflo-brand';
 import { cn } from '@/lib/utils';
-import icreonLogo from '@/assets/icreon-logo.png';
 import {
   useAddState,
   useAddTransition,
@@ -39,12 +39,12 @@ function nextId(): string {
 const WELCOME: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: 'Hi — I’m the workflow assistant. I can explain your Sitecore workflows and help you create, edit and manage them. Changes are always shown as a proposal you confirm first.',
+  text: 'Hi, I’m FLO — your WorkFLO guide. I can help you prioritize inbox work, understand workflow actions, use AI quality checks, assign content, and manage workflow definitions. I’ll always show you a proposal before I make a definition change.',
   embed: { kind: 'capabilities' },
 };
 
 /**
- * Center-pane conversational assistant.
+ * Floating conversational assistant.
  *
  * Safety model: the parser only produces structured proposals mapped to
  * the host mutations this app already exposes; each proposal renders as
@@ -123,15 +123,13 @@ export function ChatPanel({ className, onClose }: { className?: string; onClose?
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)} data-testid="panel-assistant">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <div className="flex size-7 items-center justify-center overflow-hidden rounded-md bg-background">
-          <img src={icreonLogo} alt="" className="size-full object-contain" />
-        </div>
+        <FLOAvatar className="size-7" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">Workflow assistant</p>
+          <p className="text-sm font-semibold text-foreground">FLO</p>
           <p className="truncate text-xs text-muted-foreground">
             {status.state === 'live'
-              ? 'Working with live Sitecore workflows'
-              : 'Working with demo data — changes stay local'}
+              ? 'Your guide to live Sitecore workflows'
+              : 'Exploring demo data with you — changes stay local'}
           </p>
         </div>
         {onClose && (
@@ -140,10 +138,10 @@ export function ChatPanel({ className, onClose }: { className?: string; onClose?
             variant="ghost"
             className="size-8 shrink-0"
             onClick={onClose}
-            aria-label="Hide workflow assistant"
+            aria-label="Close FLO"
             data-testid="button-hide-assistant"
           >
-            <ChevronLeft className="size-4" />
+            <X className="size-4" />
           </Button>
         )}
       </div>
@@ -194,7 +192,7 @@ export function ChatPanel({ className, onClose }: { className?: string; onClose?
               }
             }}
             rows={1}
-            placeholder="Ask about or change your workflows…"
+            placeholder="Ask about your workflow work…"
             className="max-h-32 min-h-9 flex-1 resize-none"
             data-testid="input-assistant"
           />
@@ -210,8 +208,7 @@ export function ChatPanel({ className, onClose }: { className?: string; onClose?
           </Button>
         </form>
         <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
-          The assistant only prepares changes — nothing reaches Sitecore until you confirm a
-          proposal.
+          AI review is advisory. Workflow definition changes require your confirmation.
         </p>
       </div>
     </div>
@@ -241,9 +238,7 @@ function Message({
   }
   return (
     <div className="flex gap-2.5">
-      <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-background">
-        <img src={icreonLogo} alt="" className="size-full object-contain" />
-      </div>
+      <FLOAvatar className="mt-0.5 size-6" />
       <div className="min-w-0 max-w-[90%] flex-1 space-y-2">
         <div
           className="whitespace-pre-line rounded-2xl rounded-tl-sm border border-border bg-card px-3.5 py-2 text-sm text-foreground"
